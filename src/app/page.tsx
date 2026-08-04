@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import DynamicMap from '@/components/map/DynamicMap';
+import AreaTable from '@/components/map/AreaTable';
 import { fetchEarthquakes } from '@/services/usgsApi';
 import { fetchMonitoringAreas } from '@/services/monitoringService';
 import { EarthquakeFeature } from '@/types/earthquake';
@@ -36,7 +37,7 @@ export default function HomePage() {
   }, []);
 
   return (
-    <main className="min-h-screen bg-slate-50 p-4 md:p-6 space-y-4">
+    <main className="min-h-screen bg-slate-50 p-4 md:p-6 space-y-6">
       {/* Header Aplikasi */}
       <header className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white p-4 rounded-xl shadow-sm border border-slate-200">
         <div>
@@ -92,7 +93,7 @@ export default function HomePage() {
       </div>
 
       {/* Area Peta Utama */}
-      <div className="bg-white p-2 rounded-xl border border-slate-200 shadow-sm h-[600px] relative">
+      <div className="bg-white p-2 rounded-xl border border-slate-200 shadow-sm h-[550px] relative">
         {error ? (
           <div className="h-full flex flex-col items-center justify-center text-red-500 gap-2">
             <AlertTriangle className="w-10 h-10" />
@@ -112,6 +113,9 @@ export default function HomePage() {
           />
         )}
       </div>
+
+      {/* Tabel Manajemen Area Pantauan (Di bawah Peta) */}
+      <AreaTable areas={monitoringAreas} onAreaDeleted={loadData} />
     </main>
   );
 }
