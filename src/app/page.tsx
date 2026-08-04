@@ -1,65 +1,117 @@
-import Image from "next/image";
+'use client';
 
-export default function Home() {
+import { useEffect, useState } from 'react';
+import DynamicMap from '@/components/map/DynamicMap';
+import { fetchEarthquakes } from '@/services/usgsApi';
+import { fetchMonitoringAreas } from '@/services/monitoringService';
+import { EarthquakeFeature } from '@/types/earthquake';
+import { MonitoringArea } from '@/types/monitoring';
+import { Activity, RefreshCw, AlertTriangle, Layers } from 'lucide-react';
+
+export default function HomePage() {
+  const [earthquakes, setEarthquakes] = useState<EarthquakeFeature[]>([]);
+  const [monitoringAreas, setMonitoringAreas] = useState<MonitoringArea[]>([]);
+  const [loading, setLoading] = useState<boolean>(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const loadData = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const [eqData, areaData] = await Promise.all([
+        fetchEarthquakes(),
+        fetchMonitoringAreas(),
+      ]);
+      setEarthquakes(eqData.features);
+      setMonitoringAreas(areaData);
+    } catch (err: any) {
+      setError(err.message || 'Gagal mengambil data WebGIS');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadData();
+  }, []);
+
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
+    <main className="min-h-screen bg-slate-50 p-4 md:p-6 space-y-4">
+      {/* Header Aplikasi */}
+      <header className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white p-4 rounded-xl shadow-sm border border-slate-200">
+        <div>
+          <h1 className="text-2xl font-bold text-slate-800 flex items-center gap-2">
+            <Activity className="text-emerald-600 w-7 h-7" />
+            Earthquake Monitoring WebGIS
           </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
+          <p className="text-sm text-slate-500">
+            Pemantauan gempa real-time publik & Digitasi Area Pantauan Supabase
           </p>
         </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
+
+        <button
+          onClick={loadData}
+          disabled={loading}
+          className="flex items-center gap-2 px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-lg transition-colors text-sm font-medium disabled:opacity-50"
+        >
+          <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+          Refresh Data
+        </button>
+      </header>
+
+      {/* Kartu Ringkasan Informasi */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
+          <p className="text-xs text-slate-500 uppercase tracking-wider font-semibold">Total Gempa Terdeteksi</p>
+          <p className="text-2xl font-bold text-slate-800 mt-1">
+            {loading ? '...' : earthquakes.length} <span className="text-sm font-normal text-slate-500">kejadian</span>
+          </p>
         </div>
-      </main>
-    </div>
+        <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
+          <p className="text-xs text-slate-500 uppercase tracking-wider font-semibold">Area Pantauan Tersimpan</p>
+          <p className="text-2xl font-bold text-emerald-600 mt-1 flex items-center gap-2">
+            <Layers className="w-6 h-6" />
+            {loading ? '...' : monitoringAreas.length} <span className="text-sm font-normal text-slate-500">zona</span>
+          </p>
+        </div>
+        <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
+          <p className="text-xs text-slate-500 uppercase tracking-wider font-semibold">Status Sistem</p>
+          <p className="text-sm font-bold mt-2 flex items-center gap-1.5">
+            {error ? (
+              <span className="text-red-600 flex items-center gap-1">
+                <AlertTriangle className="w-4 h-4" /> Kendala Sistem
+              </span>
+            ) : (
+              <span className="text-emerald-600 flex items-center gap-1">
+                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                USGS & Supabase Aktif
+              </span>
+            )}
+          </p>
+        </div>
+      </div>
+
+      {/* Area Peta Utama */}
+      <div className="bg-white p-2 rounded-xl border border-slate-200 shadow-sm h-[600px] relative">
+        {error ? (
+          <div className="h-full flex flex-col items-center justify-center text-red-500 gap-2">
+            <AlertTriangle className="w-10 h-10" />
+            <p className="font-semibold">{error}</p>
+            <button
+              onClick={loadData}
+              className="mt-2 text-xs bg-red-100 hover:bg-red-200 text-red-700 px-3 py-1.5 rounded-md transition-colors"
+            >
+              Coba Lagi
+            </button>
+          </div>
+        ) : (
+          <DynamicMap
+            earthquakes={earthquakes}
+            monitoringAreas={monitoringAreas}
+            onAreaSaved={loadData}
+          />
+        )}
+      </div>
+    </main>
   );
 }
