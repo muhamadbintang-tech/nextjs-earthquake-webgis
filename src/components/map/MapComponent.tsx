@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { MapContainer, TileLayer, CircleMarker, Popup, GeoJSON, useMap } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
 import 'leaflet-draw/dist/leaflet.draw.css';
@@ -25,8 +25,14 @@ function getMarkerColor(mag: number): string {
   return '#10b981';
 }
 
-// Sub-Komponen Khusus Pengendali Tools Leaflet Draw
-function DrawControl({ onPolygonCreated }: { onPolygonCreated: (geometry: any) => void }) {
+// Sub-Komponen Pengendali Tools Leaflet Draw
+function DrawControl({
+  onPolygonCreated,
+  drawnItemsRef,
+}: {
+  onPolygonCreated: (geometry: any) => void;
+  drawnItemsRef: React.MutableRefObject<L.FeatureGroup | null>;
+}) {
   const map = useMap();
 
   useEffect(() => {
@@ -34,6 +40,7 @@ function DrawControl({ onPolygonCreated }: { onPolygonCreated: (geometry: any) =
 
     const drawnItems = new L.FeatureGroup();
     map.addLayer(drawnItems);
+    drawnItemsRef.current = drawnItems;
 
     const drawControl = new L.Control.Draw({
       draw: {
@@ -46,8 +53,8 @@ function DrawControl({ onPolygonCreated }: { onPolygonCreated: (geometry: any) =
       },
       edit: {
         featureGroup: drawnItems,
-        edit: false,   // Menonaktifkan/menghilangkan tombol edit pensil
-        remove: false, // Menonaktifkan/menghilangkan tombol hapus
+        edit: false,
+        remove: false,
       },
     });
 
@@ -65,10 +72,72 @@ function DrawControl({ onPolygonCreated }: { onPolygonCreated: (geometry: any) =
     return () => {
       map.removeControl(drawControl);
       map.off(L.Draw.Event.CREATED, handleCreated);
+      drawnItemsRef.current = null;
     };
-  }, [map, onPolygonCreated]);
+  }, [map, onPolygonCreated, drawnItemsRef]);
 
   return null;
+}
+
+// Sub-Komponen Pengelola Layer GeoJSON & Pembersih Kanvas Lukis
+function MonitoringAreasLayer({
+  monitoringAreas,
+  drawnItemsRef,
+}: {
+  monitoringAreas: MonitoringArea[];
+  drawnItemsRef: React.MutableRefObject<L.FeatureGroup | null>;
+}) {
+  // Bersihkan lukisan sementara di kanvas setiap kali daftar area berubah (misal saat hapus/tambah)
+  useEffect(() => {
+    if (drawnItemsRef.current) {
+      drawnItemsRef.current.clearLayers();
+    }
+  }, [monitoringAreas, drawnItemsRef]);
+
+  // Bungkus seluruh data Supabase menjadi satu FeatureCollection GeoJSON
+  const geojsonFeatureCollection: GeoJSON.FeatureCollection = {
+    type: 'FeatureCollection',
+    features: monitoringAreas.map((area) => ({
+      type: 'Feature',
+      id: area.id,
+      geometry: area.geometry as any,
+      properties: {
+        id: area.id,
+        name: area.name,
+        category: area.category,
+        description: area.description,
+      },
+    })),
+  };
+
+  // Unique key berdasarkan gabungan ID agar React Leaflet merender ulang secara akurat
+  const layerKey = monitoringAreas.map((a) => a.id).join('-');
+
+  return (
+    <GeoJSON
+      key={layerKey || 'empty-areas'}
+      data={geojsonFeatureCollection}
+      style={{
+        color: '#059669',
+        fillColor: '#10b981',
+        fillOpacity: 0.35,
+        weight: 2,
+      }}
+      onEachFeature={(feature, layer) => {
+        const props = feature.properties;
+        const popupContent = `
+          <div class="p-1 space-y-1 text-sm font-sans">
+            <span class="text-xs font-semibold px-2 py-0.5 bg-emerald-100 text-emerald-800 rounded-full">
+              ${props.category}
+            </span>
+            <h3 class="font-bold text-gray-900 border-b pb-1 mt-1">${props.name}</h3>
+            <p class="text-gray-700 text-xs">${props.description || 'Tidak ada deskripsi.'}</p>
+          </div>
+        `;
+        layer.bindPopup(popupContent);
+      }}
+    />
+  );
 }
 
 export default function MapComponent({ earthquakes, monitoringAreas, onAreaSaved }: MapComponentProps) {
@@ -78,13 +147,13 @@ export default function MapComponent({ earthquakes, monitoringAreas, onAreaSaved
   const [currentGeometry, setCurrentGeometry] = useState<any>(null);
   const [saving, setSaving] = useState(false);
 
-  // Tangkap polygon yang baru saja digambar pengguna
+  const drawnItemsRef = useRef<L.FeatureGroup | null>(null);
+
   const handlePolygonCreated = (geometry: any) => {
     setCurrentGeometry(geometry);
     setIsModalOpen(true);
   };
 
-  // Simpan data ke Supabase saat form disubmit
   const handleSaveArea = async (formData: { name: string; category: string; description: string }) => {
     if (!currentGeometry) return;
     setSaving(true);
@@ -96,15 +165,27 @@ export default function MapComponent({ earthquakes, monitoringAreas, onAreaSaved
         geometry: currentGeometry,
       });
 
+      if (drawnItemsRef.current) {
+        drawnItemsRef.current.clearLayers();
+      }
+
       setIsModalOpen(false);
       setCurrentGeometry(null);
-      onAreaSaved(); // Refresh daftar area di halaman utama
+      onAreaSaved();
       alert('Area Pantauan Berhasil Disimpan ke Supabase!');
     } catch (err: any) {
       alert('Gagal menyimpan area: ' + err.message);
     } finally {
       setSaving(false);
     }
+  };
+
+  const handleModalClose = () => {
+    if (drawnItemsRef.current) {
+      drawnItemsRef.current.clearLayers();
+    }
+    setIsModalOpen(false);
+    setCurrentGeometry(null);
   };
 
   return (
@@ -121,33 +202,12 @@ export default function MapComponent({ earthquakes, monitoringAreas, onAreaSaved
         />
 
         {/* Alat Lukis Digitasi Polygon */}
-        <DrawControl onPolygonCreated={handlePolygonCreated} />
+        <DrawControl onPolygonCreated={handlePolygonCreated} drawnItemsRef={drawnItemsRef} />
 
-        {/* Render Layer Area Pantauan dari Supabase */}
-        {monitoringAreas.map((area) => (
-          <GeoJSON
-            key={area.id || Math.random().toString()}
-            data={area.geometry as any}
-            style={{
-              color: '#059669',
-              fillColor: '#10b981',
-              fillOpacity: 0.35,
-              weight: 2,
-            }}
-          >
-            <Popup>
-              <div className="p-1 space-y-1 text-sm font-sans">
-                <span className="text-xs font-semibold px-2 py-0.5 bg-emerald-100 text-emerald-800 rounded-full">
-                  {area.category}
-                </span>
-                <h3 className="font-bold text-gray-900 border-b pb-1 mt-1">{area.name}</h3>
-                <p className="text-gray-700 text-xs">{area.description || 'Tidak ada deskripsi.'}</p>
-              </div>
-            </Popup>
-          </GeoJSON>
-        ))}
+        {/* Layer Area Pantauan Supabase & Pembersih Kanvas */}
+        <MonitoringAreasLayer monitoringAreas={monitoringAreas} drawnItemsRef={drawnItemsRef} />
 
-        {/* Render Layer Titik Gempa USGS */}
+        {/* Titik Gempa USGS */}
         {earthquakes.map((item) => {
           const [lng, lat, depth] = item.geometry.coordinates;
           const color = getMarkerColor(item.properties.mag);
@@ -195,7 +255,7 @@ export default function MapComponent({ earthquakes, monitoringAreas, onAreaSaved
       {/* Modal Input Data Area */}
       <AreaModal
         isOpen={isModalOpen}
-        onClose={() => setIsModalOpen(false)}
+        onClose={handleModalClose}
         onSave={handleSaveArea}
         loading={saving}
       />

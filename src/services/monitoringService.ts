@@ -1,7 +1,7 @@
 import { supabase } from '@/lib/supabase';
 import { MonitoringArea } from '@/types/monitoring';
 
-// 1. Fungsi Mengambil Seluruh Area Pantauan dari Supabase
+// 1. Ambil Semua Data Area dari Supabase
 export async function fetchMonitoringAreas(): Promise<MonitoringArea[]> {
   const { data, error } = await supabase
     .from('monitoring_areas')
@@ -9,32 +9,37 @@ export async function fetchMonitoringAreas(): Promise<MonitoringArea[]> {
     .order('created_at', { ascending: false });
 
   if (error) {
-    console.error('Error mengambil area pantauan:', error.message);
-    throw new Error('Gagal mengambil data area pantauan');
+    throw new Error(`Gagal mengambil data area: ${error.message}`);
   }
 
   return data || [];
 }
 
-// 2. Fungsi Menyimpan Area Pantauan Baru ke Supabase
-export async function createMonitoringArea(area: MonitoringArea): Promise<MonitoringArea> {
+// 2. Simpan Area Baru ke Supabase
+export async function createMonitoringArea(area: Omit<MonitoringArea, 'id' | 'created_at'>): Promise<MonitoringArea> {
   const { data, error } = await supabase
     .from('monitoring_areas')
-    .insert([
-      {
-        name: area.name,
-        description: area.description,
-        category: area.category,
-        geometry: area.geometry, // GeoJSON Polygon
-      },
-    ])
+    .insert([area])
     .select()
     .single();
 
   if (error) {
-    console.error('Error menyimpan area pantauan:', error.message);
-    throw new Error('Gagal menyimpan area pantauan ke database');
+    throw new Error(`Gagal menyimpan area: ${error.message}`);
   }
 
   return data;
+}
+
+// 3. Hapus Area Berdasarkan ID dari Supabase
+export async function deleteMonitoringArea(id: string): Promise<boolean> {
+  const { error } = await supabase
+    .from('monitoring_areas')
+    .delete()
+    .eq('id', id);
+
+  if (error) {
+    throw new Error(`Gagal menghapus area: ${error.message}`);
+  }
+
+  return true;
 }
