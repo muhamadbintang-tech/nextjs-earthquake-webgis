@@ -3,11 +3,14 @@
 import { useEffect, useState } from 'react';
 import DynamicMap from '@/components/map/DynamicMap';
 import { fetchEarthquakes } from '@/services/usgsApi';
+import { fetchMonitoringAreas } from '@/services/monitoringService';
 import { EarthquakeFeature } from '@/types/earthquake';
-import { Activity, RefreshCw, AlertTriangle } from 'lucide-react';
+import { MonitoringArea } from '@/types/monitoring';
+import { Activity, RefreshCw, AlertTriangle, Layers } from 'lucide-react';
 
 export default function HomePage() {
   const [earthquakes, setEarthquakes] = useState<EarthquakeFeature[]>([]);
+  const [monitoringAreas, setMonitoringAreas] = useState<MonitoringArea[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -15,10 +18,14 @@ export default function HomePage() {
     setLoading(true);
     setError(null);
     try {
-      const data = await fetchEarthquakes();
-      setEarthquakes(data.features);
+      const [eqData, areaData] = await Promise.all([
+        fetchEarthquakes(),
+        fetchMonitoringAreas(),
+      ]);
+      setEarthquakes(eqData.features);
+      setMonitoringAreas(areaData);
     } catch (err: any) {
-      setError(err.message || 'Gagal mengambil data gempa');
+      setError(err.message || 'Gagal mengambil data WebGIS');
     } finally {
       setLoading(false);
     }
@@ -38,7 +45,7 @@ export default function HomePage() {
             Earthquake Monitoring WebGIS
           </h1>
           <p className="text-sm text-slate-500">
-            Pemantauan gempa real-time publik berbasis GeoJSON USGS
+            Pemantauan gempa real-time publik & Digitasi Area Pantauan Supabase
           </p>
         </div>
 
@@ -61,24 +68,25 @@ export default function HomePage() {
           </p>
         </div>
         <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
-          <p className="text-xs text-slate-500 uppercase tracking-wider font-semibold">Status Koneksi API</p>
+          <p className="text-xs text-slate-500 uppercase tracking-wider font-semibold">Area Pantauan Tersimpan</p>
+          <p className="text-2xl font-bold text-emerald-600 mt-1 flex items-center gap-2">
+            <Layers className="w-6 h-6" />
+            {loading ? '...' : monitoringAreas.length} <span className="text-sm font-normal text-slate-500">zona</span>
+          </p>
+        </div>
+        <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
+          <p className="text-xs text-slate-500 uppercase tracking-wider font-semibold">Status Sistem</p>
           <p className="text-sm font-bold mt-2 flex items-center gap-1.5">
             {error ? (
               <span className="text-red-600 flex items-center gap-1">
-                <AlertTriangle className="w-4 h-4" /> Error API
+                <AlertTriangle className="w-4 h-4" /> Kendala Sistem
               </span>
             ) : (
               <span className="text-emerald-600 flex items-center gap-1">
                 <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-                Terhubung ke USGS
+                USGS & Supabase Aktif
               </span>
             )}
-          </p>
-        </div>
-        <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
-          <p className="text-xs text-slate-500 uppercase tracking-wider font-semibold">Waktu Pembaruan Terakhir</p>
-          <p className="text-sm font-medium text-slate-700 mt-2">
-            {new Date().toLocaleTimeString('id-ID')} WIB
           </p>
         </div>
       </div>
@@ -97,7 +105,11 @@ export default function HomePage() {
             </button>
           </div>
         ) : (
-          <DynamicMap earthquakes={earthquakes} />
+          <DynamicMap
+            earthquakes={earthquakes}
+            monitoringAreas={monitoringAreas}
+            onAreaSaved={loadData}
+          />
         )}
       </div>
     </main>

@@ -2,12 +2,14 @@
 
 import dynamic from 'next/dynamic';
 import { EarthquakeFeature } from '@/types/earthquake';
+import { MonitoringArea } from '@/types/monitoring';
 
 interface DynamicMapProps {
   earthquakes: EarthquakeFeature[];
+  monitoringAreas: MonitoringArea[];
+  onAreaSaved: () => void;
 }
 
-// Memuat MapComponent secara dinamis dengan opsi ssr: false
 const MapComponent = dynamic(() => import('./MapComponent'), {
   ssr: false,
   loading: () => (
@@ -20,6 +22,12 @@ const MapComponent = dynamic(() => import('./MapComponent'), {
   ),
 });
 
-export default function DynamicMap({ earthquakes }: DynamicMapProps) {
-  return <MapComponent earthquakes={earthquakes} />;
+export default function DynamicMap({ earthquakes, monitoringAreas, onAreaSaved }: DynamicMapProps) {
+  return (
+    <MapComponent
+      earthquakes={earthquakes}
+      monitoringAreas={monitoringAreas}
+      onAreaSaved={onAreaSaved}
+    />
+  );
 }
