@@ -1,177 +1,246 @@
 'use client';
 
-import { useEffect, useState, useMemo } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import dynamic from 'next/dynamic';
-import { getEarthquakes } from '@/services/earthquakeService';
-import { getMonitoringAreas } from '@/services/monitoringService';
+import { getEarthquakes } from '../services/earthquakeService';
+import { getMonitoringAreas, deleteMonitoringArea } from '@/services/monitoringService';
 import { EarthquakeFeature } from '@/types/earthquake';
 import { MonitoringArea } from '@/types/monitoring';
-import FilterBar from '@/components/dashboard/FilterBar';
+import AreaTable from '@/components/dashboard/AreaTable';
 
-// Import peta secara dinamis (karena Leaflet butuh objek window di browser)
+// Dynamic import MapComponent untuk menghindari kendala SSR di Next.js
 const MapComponent = dynamic(() => import('@/components/map/MapComponent'), {
   ssr: false,
   loading: () => (
-    <div className="w-full h-[550px] bg-gray-100 rounded-lg flex items-center justify-center text-gray-500 font-medium">
-      Memuat Peta WebGIS...
+    <div className="w-full h-[550px] bg-gray-100 rounded-lg animate-pulse flex flex-col items-center justify-center text-gray-400 gap-2 border border-gray-200">
+      <div className="w-8 h-8 border-4 border-emerald-500 border-t-transparent rounded-full animate-spin"></div>
+      <p className="text-sm font-medium">Memuat Peta WebGIS...</p>
     </div>
   ),
 });
 
-export default function HomePage() {
+export default function Home() {
+  // State Data
   const [earthquakes, setEarthquakes] = useState<EarthquakeFeature[]>([]);
   const [monitoringAreas, setMonitoringAreas] = useState<MonitoringArea[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
-  // State untuk Fitur Filter & Pencarian
-  const [searchQuery, setSearchQuery] = useState('');
-  const [minMagnitude, setMinMagnitude] = useState(0);
-  const [timeRange, setTimeRange] = useState('all');
+  // State Filter
+  const [searchQuery, setSearchQuery] = useState<string>('');
+  const [minMagnitude, setMinMagnitude] = useState<number>(0);
+  const [timeRangeHours, setTimeRangeHours] = useState<number>(0); // 0 = Semua Waktu
 
-  // Ambil data gempa & data area dari Supabase
-  const fetchData = async () => {
+  // Mengambil data gempa dan area pantauan
+  const loadData = async () => {
     setLoading(true);
     setError(null);
     try {
-      const [eqData, areasData] = await Promise.all([
+      const [eqResponse, areasResponse] = await Promise.all([
         getEarthquakes(),
         getMonitoringAreas(),
       ]);
-      setEarthquakes(eqData.features || []);
-      setMonitoringAreas(areasData || []);
+
+      setEarthquakes(eqResponse.features || []);
+      setMonitoringAreas(areasResponse || []);
     } catch (err: any) {
-      console.error(err);
-      setError(err.message || 'Gagal mengambil data sistem');
+      console.error('Error fetching data:', err);
+      setError(err.message || 'Gagal mengambil data dari server');
     } finally {
       setLoading(false);
     }
   };
 
   useEffect(() => {
-    fetchData();
+    loadData();
   }, []);
 
-  // Logika Filter Data Gempa secara Real-Time
+  // Filter Gempa berdasarkan Input User
   const filteredEarthquakes = useMemo(() => {
     const now = Date.now();
 
-    return earthquakes.filter((eq) => {
+    return earthquakes.filter((item) => {
       // 1. Filter Pencarian Lokasi
-      const placeName = eq.properties.place ? eq.properties.place.toLowerCase() : '';
-      const titleName = eq.properties.title ? eq.properties.title.toLowerCase() : '';
-      const matchesSearch =
-        placeName.includes(searchQuery.toLowerCase()) ||
-        titleName.includes(searchQuery.toLowerCase());
+      const matchSearch =
+        !searchQuery ||
+        item.properties.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        item.properties.place?.toLowerCase().includes(searchQuery.toLowerCase());
 
-      // 2. Filter Magnitudo Minimal
-      const matchesMag = eq.properties.mag >= minMagnitude;
+      // 2. Filter Magnitudo
+      const matchMag = item.properties.mag >= minMagnitude;
 
-      // 3. Filter Rentang Waktu Kejadian
-      let matchesTime = true;
-      const eqTime = eq.properties.time;
-      if (timeRange === '24h') {
-        matchesTime = now - eqTime <= 24 * 60 * 60 * 1000;
-      } else if (timeRange === '7d') {
-        matchesTime = now - eqTime <= 7 * 24 * 60 * 60 * 1000;
-      } else if (timeRange === '30d') {
-        matchesTime = now - eqTime <= 30 * 24 * 60 * 60 * 1000;
+      // 3. Filter Rentang Waktu
+      let matchTime = true;
+      if (timeRangeHours > 0) {
+        const diffInHours = (now - item.properties.time) / (1000 * 60 * 60);
+        matchTime = diffInHours <= timeRangeHours;
       }
 
-      return matchesSearch && matchesMag && matchesTime;
+      return matchSearch && matchMag && matchTime;
     });
-  }, [earthquakes, searchQuery, minMagnitude, timeRange]);
+  }, [earthquakes, searchQuery, minMagnitude, timeRangeHours]);
+
+  // Handler Hapus Area
+  const handleDeleteArea = async (id: string, name: string) => {
+    const isConfirm = window.confirm(`Apakah Anda yakin ingin menghapus area pantauan "${name}"?`);
+    if (!isConfirm) return;
+
+    setDeletingId(id);
+    try {
+      await deleteMonitoringArea(id);
+      setMonitoringAreas((prev) => prev.filter((area) => area.id !== id));
+    } catch (err: any) {
+      alert('Gagal menghapus area: ' + err.message);
+    } finally {
+      setDeletingId(null);
+    }
+  };
 
   return (
-    <main className="min-h-screen bg-gray-50 p-4 md:p-6 space-y-6">
-      {/* 1. Header Aplikasi */}
-      <header className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white p-5 rounded-xl border border-gray-200 shadow-sm">
-        <div className="flex items-center gap-3">
-          <span className="text-3xl">🌐</span>
-          <div>
-            <h1 className="text-xl md:text-2xl font-bold text-gray-900">
-              Earthquake Monitoring WebGIS
-            </h1>
-            <p className="text-xs md:text-sm text-gray-500">
-              Pemantauan gempa real-time USGS & Digitasi Area Pantauan Supabase
-            </p>
-          </div>
+    <main className="min-h-screen bg-slate-50 text-gray-800 p-4 sm:p-6 lg:p-8 space-y-6 max-w-7xl mx-auto">
+      {/* Header Utama */}
+      <header className="flex flex-col sm:flex-row sm:items-center sm:justify-between bg-white rounded-xl shadow-sm border border-gray-100 p-6 gap-4">
+        <div>
+          <h1 className="text-2xl font-black text-gray-900 flex items-center gap-2">
+            <span className="text-emerald-600">🌐</span> Earthquake Monitoring WebGIS
+          </h1>
+          <p className="text-xs sm:text-sm text-gray-500 mt-1">
+            Pemantauan gempa real-time USGS & Digitasi Area Pantauan Supabase
+          </p>
         </div>
+
         <button
-          onClick={fetchData}
+          onClick={loadData}
           disabled={loading}
-          className="flex items-center justify-center gap-2 px-4 py-2 bg-gray-900 hover:bg-black text-white text-sm font-medium rounded-lg transition-colors disabled:opacity-50"
+          className="inline-flex items-center justify-center gap-2 px-4 py-2.5 bg-slate-900 hover:bg-slate-800 text-white text-xs sm:text-sm font-semibold rounded-lg shadow transition-all disabled:opacity-50"
         >
-          <span>🔄</span>
-          <span>{loading ? 'Menyinkronkan...' : 'Refresh Data'}</span>
+          <span className={loading ? 'animate-spin' : ''}>🔄</span>
+          {loading ? 'Memperbarui...' : 'Refresh Data'}
         </button>
       </header>
 
-      {/* 2. Kartu Metrik Ringkasan */}
-      <section className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <div className="bg-white p-4 rounded-xl border border-gray-200 shadow-sm">
-          <p className="text-xs font-semibold text-gray-500 uppercase">
-            Total Gempa Tampil
-          </p>
-          <div className="flex items-baseline gap-2 mt-1">
-            <span className="text-2xl font-bold text-gray-900">
-              {filteredEarthquakes.length}
+      {/* Kartu Statistik */}
+      <section className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <div className="bg-white rounded-xl p-5 border border-gray-100 shadow-sm">
+          <p className="text-xs font-bold uppercase tracking-wider text-gray-400">Total Gempa Tampil</p>
+          <div className="mt-2 flex items-baseline gap-2">
+            <span className="text-3xl font-extrabold text-gray-900">
+              {loading ? '...' : filteredEarthquakes.length}
             </span>
-            <span className="text-xs text-gray-400">
-              dari {earthquakes.length} kejadian
-            </span>
+            <span className="text-xs text-gray-500">dari {earthquakes.length} kejadian</span>
           </div>
         </div>
 
-        <div className="bg-white p-4 rounded-xl border border-gray-200 shadow-sm">
-          <p className="text-xs font-semibold text-gray-500 uppercase">
-            Area Pantauan Tersimpan
-          </p>
-          <div className="flex items-baseline gap-2 mt-1">
-            <span className="text-2xl font-bold text-emerald-600">
-              {monitoringAreas.length}
+        <div className="bg-white rounded-xl p-5 border border-gray-100 shadow-sm">
+          <p className="text-xs font-bold uppercase tracking-wider text-gray-400">Area Pantauan Tersimpan</p>
+          <div className="mt-2 flex items-baseline gap-2">
+            <span className="text-3xl font-extrabold text-emerald-600">
+              {loading ? '...' : monitoringAreas.length}
             </span>
-            <span className="text-xs text-gray-400">zona polygon</span>
+            <span className="text-xs text-gray-500">zona polygon</span>
           </div>
         </div>
 
-        <div className="bg-white p-4 rounded-xl border border-gray-200 shadow-sm">
-          <p className="text-xs font-semibold text-gray-500 uppercase">
-            Status Sistem
-          </p>
-          <div className="flex items-center gap-2 mt-1">
+        <div className="bg-white rounded-xl p-5 border border-gray-100 shadow-sm">
+          <p className="text-xs font-bold uppercase tracking-wider text-gray-400">Status Sistem</p>
+          <div className="mt-2 flex items-center gap-2">
             {error ? (
-              <span className="text-xs font-bold text-red-600 bg-red-50 px-2 py-1 rounded">
-                ⚠️ Kendala: {error}
-              </span>
+              <>
+                <span className="w-2.5 h-2.5 rounded-full bg-rose-500 animate-ping"></span>
+                <span className="text-xs font-bold text-rose-600">Kendala Sistem</span>
+              </>
             ) : (
-              <span className="text-xs font-bold text-emerald-700 bg-emerald-50 px-2 py-1 rounded flex items-center gap-1.5">
-                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-                Terhubung Normal
-              </span>
+              <>
+                <span className="w-2.5 h-2.5 rounded-full bg-emerald-500"></span>
+                <span className="text-xs font-bold text-emerald-700">Terhubung Normal</span>
+              </>
             )}
           </div>
         </div>
       </section>
 
-      {/* 3. Komponen Filter & Pencarian */}
-      <FilterBar
-        searchQuery={searchQuery}
-        setSearchQuery={setSearchQuery}
-        minMagnitude={minMagnitude}
-        setMinMagnitude={setMinMagnitude}
-        timeRange={timeRange}
-        setTimeRange={setTimeRange}
-        totalFiltered={filteredEarthquakes.length}
-        totalOriginal={earthquakes.length}
-      />
+      {/* Filter & Pencarian Lokasi */}
+      <section className="bg-white rounded-xl shadow-sm border border-gray-100 p-5 space-y-4">
+        <h2 className="text-sm font-bold text-gray-700 flex items-center gap-2">
+          <span>🔍</span> Filter & Pencarian Gempa
+        </h2>
 
-      {/* 4. Tampilan Peta WebGIS */}
-      <section className="bg-white p-3 md:p-4 rounded-xl border border-gray-200 shadow-sm">
-        <MapComponent
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          {/* Input Pencarian Wilayah */}
+          <div>
+            <label className="block text-xs font-semibold text-gray-600 mb-1">Cari Lokasi / Wilayah</label>
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Contoh: Java, Sumatra, Sulawesi..."
+              className="w-full text-xs sm:text-sm px-3.5 py-2.5 rounded-lg border border-gray-200 focus:outline-none focus:ring-2 focus:ring-emerald-500 bg-gray-50 focus:bg-white transition-all"
+            />
+          </div>
+
+          {/* Filter Magnitudo */}
+          <div>
+            <label className="block text-xs font-semibold text-gray-600 mb-1">Batas Kekuatan (Magnitudo)</label>
+            <select
+              value={minMagnitude}
+              onChange={(e) => setMinMagnitude(Number(e.target.value))}
+              className="w-full text-xs sm:text-sm px-3.5 py-2.5 rounded-lg border border-gray-200 focus:outline-none focus:ring-2 focus:ring-emerald-500 bg-gray-50 focus:bg-white transition-all"
+            >
+              <option value={0}>Semua Kekuatan (M ≥ 0)</option>
+              <option value={3.0}>Gempa Ringan (M ≥ 3.0)</option>
+              <option value={4.5}>Gempa Sedang (M ≥ 4.5)</option>
+              <option value={6.0}>Gempa Kuat (M ≥ 6.0)</option>
+            </select>
+          </div>
+
+          {/* Filter Rentang Waktu */}
+          <div>
+            <label className="block text-xs font-semibold text-gray-600 mb-1">Rentang Waktu</label>
+            <select
+              value={timeRangeHours}
+              onChange={(e) => setTimeRangeHours(Number(e.target.value))}
+              className="w-full text-xs sm:text-sm px-3.5 py-2.5 rounded-lg border border-gray-200 focus:outline-none focus:ring-2 focus:ring-emerald-500 bg-gray-50 focus:bg-white transition-all"
+            >
+              <option value={0}>Semua Waktu Tersedia</option>
+              <option value={1}>1 Jam Terakhir</option>
+              <option value={6}>6 Jam Terakhir</option>
+              <option value={12}>12 Jam Terakhir</option>
+              <option value={24}>24 Jam Terakhir</option>
+            </select>
+          </div>
+        </div>
+      </section>
+
+      {/* Kontainer Peta GIS */}
+      <section className="bg-white rounded-xl shadow-sm border border-gray-100 p-2 sm:p-4 overflow-hidden">
+        {error ? (
+          <div className="w-full h-[500px] flex flex-col items-center justify-center text-center p-6 gap-3 bg-rose-50/50 rounded-lg">
+            <span className="text-4xl">⚠️</span>
+            <p className="text-sm font-bold text-rose-600">{error}</p>
+            <button
+              onClick={loadData}
+              className="px-4 py-2 bg-rose-600 text-white text-xs font-semibold rounded-lg hover:bg-rose-700 transition"
+            >
+              Coba Lagi
+            </button>
+          </div>
+        ) : (
+          <MapComponent
+            earthquakes={filteredEarthquakes}
+            monitoringAreas={monitoringAreas}
+            onAreaSaved={loadData}
+          />
+        )}
+      </section>
+
+      {/* Tabel Data Area Pantauan & Analisis Spasial */}
+      <section>
+        <AreaTable
+          areas={monitoringAreas}
           earthquakes={filteredEarthquakes}
-          monitoringAreas={monitoringAreas}
-          onAreaSaved={fetchData}
+          onDelete={handleDeleteArea}
+          deletingId={deletingId}
         />
       </section>
     </main>
