@@ -57,10 +57,10 @@ function CursorCoordinatesControl() {
 
   return (
     <div className="leaflet-bottom leaflet-left !mb-2 !ml-2 z-[1000] pointer-events-none">
-      <div className="bg-white/90 backdrop-blur-sm px-3 py-1.5 rounded-md shadow-md border border-gray-200 text-xs font-mono font-medium text-gray-800 flex items-center gap-2">
+      <div className="bg-slate-900/90 dark:bg-black/90 backdrop-blur-sm px-3 py-1.5 rounded-md shadow-md border border-slate-700 text-xs font-mono font-medium text-emerald-400 flex items-center gap-2">
         <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
         <span>Lat: {coords.lat}</span>
-        <span className="text-gray-300">|</span>
+        <span className="text-slate-500">|</span>
         <span>Lng: {coords.lng}</span>
       </div>
     </div>
@@ -113,7 +113,6 @@ function DrawControl({
       drawnItems.addLayer(layer);
       const geojson = layer.toGeoJSON();
 
-      // Hitung luas area menggunakan Turf.js (m² diubah ke km²)
       let calculatedAreaKm2 = 0;
       try {
         const areaInSqMeters = turf.area(geojson);
@@ -173,9 +172,9 @@ function MonitoringAreasLayer({
       key={layerKey || 'empty-areas'}
       data={geojsonFeatureCollection}
       style={{
-        color: '#059669',
-        fillColor: '#10b981',
-        fillOpacity: 0.35,
+        color: '#10b981',
+        fillColor: '#059669',
+        fillOpacity: 0.4,
         weight: 2,
       }}
       onEachFeature={(feature, layer) => {
@@ -265,15 +264,21 @@ export default function MapComponent({ earthquakes, monitoringAreas, onAreaSaved
         scrollWheelZoom={true}
         className="w-full h-full min-h-[550px] z-0 rounded-lg shadow-inner relative"
       >
-        {/* Layer Switcher (Pilihan Basemap Standar GIS) */}
+        {/* Layer Switcher */}
         <LayersControl position="topright">
-          <BaseLayer checked name="🗺️ OpenStreetMap (Default)">
+          <BaseLayer checked name="🌑 CartoDB Dark (Dark Mode)">
+            <TileLayer
+              attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>'
+              url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
+            />
+          </BaseLayer>
+          <BaseLayer name="🗺️ OpenStreetMap (Default)">
             <TileLayer
               attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
               url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
             />
           </BaseLayer>
-          <BaseLayer name="🛰️ Citra Satelit (ESRI World Imagery)">
+          <BaseLayer name="🛰️ Citra Satelit (ESRI)">
             <TileLayer
               attribution='Tiles &copy; Esri &mdash; Source: Esri, i-cubed, USDA, USGS, AEX, GeoEye, Getmapping, Aerogrid, IGN, IGP, UPR-EGP, and the GIS User Community'
               url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
@@ -287,7 +292,7 @@ export default function MapComponent({ earthquakes, monitoringAreas, onAreaSaved
           </BaseLayer>
         </LayersControl>
 
-        {/* Pelacak Koordinat Kursor Real-Time */}
+        {/* Pelacak Koordinat */}
         <CursorCoordinatesControl />
 
         {/* Kontrol Gambar Digitasi Polygon */}
@@ -309,7 +314,7 @@ export default function MapComponent({ earthquakes, monitoringAreas, onAreaSaved
               pathOptions={{
                 color: color,
                 fillColor: color,
-                fillOpacity: 0.7,
+                fillOpacity: 0.8,
                 weight: 2,
               }}
             >
