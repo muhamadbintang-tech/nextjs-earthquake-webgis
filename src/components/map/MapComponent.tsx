@@ -1,16 +1,28 @@
 'use client';
 
 import { useEffect, useState, useRef } from 'react';
-import { MapContainer, TileLayer, CircleMarker, Popup, GeoJSON, useMap } from 'react-leaflet';
+import {
+  MapContainer,
+  TileLayer,
+  CircleMarker,
+  Popup,
+  GeoJSON,
+  LayersControl,
+  useMap,
+  useMapEvents,
+} from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
 import 'leaflet-draw/dist/leaflet.draw.css';
 import L from 'leaflet';
 import 'leaflet-draw';
+import * as turf from '@turf/turf';
 
 import { EarthquakeFeature } from '@/types/earthquake';
 import { MonitoringArea } from '@/types/monitoring';
 import AreaModal from './AreaModal';
 import { createMonitoringArea } from '@/services/monitoringService';
+
+const { BaseLayer } = LayersControl;
 
 interface MapComponentProps {
   earthquakes: EarthquakeFeature[];
@@ -18,19 +30,49 @@ interface MapComponentProps {
   onAreaSaved: () => void;
 }
 
-// Helper Warna Gempa
+// 1. Helper Warna Marker Gempa
 function getMarkerColor(mag: number): string {
-  if (mag >= 5.0) return '#ef4444';
-  if (mag >= 3.0) return '#f59e0b';
-  return '#10b981';
+  if (mag >= 5.0) return '#ef4444'; // Merah
+  if (mag >= 3.0) return '#f59e0b'; // Oranye
+  return '#10b981'; // Hijau
 }
 
-// Sub-Komponen Pengendali Tools Leaflet Draw
+// 2. Kontrol Koordinat Kursor Real-Time
+function CursorCoordinatesControl() {
+  const [coords, setCoords] = useState<{ lat: number; lng: number } | null>(null);
+
+  useMapEvents({
+    mousemove(e) {
+      setCoords({
+        lat: Number(e.latlng.lat.toFixed(5)),
+        lng: Number(e.latlng.lng.toFixed(5)),
+      });
+    },
+    mouseout() {
+      setCoords(null);
+    },
+  });
+
+  if (!coords) return null;
+
+  return (
+    <div className="leaflet-bottom leaflet-left !mb-2 !ml-2 z-[1000] pointer-events-none">
+      <div className="bg-white/90 backdrop-blur-sm px-3 py-1.5 rounded-md shadow-md border border-gray-200 text-xs font-mono font-medium text-gray-800 flex items-center gap-2">
+        <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+        <span>Lat: {coords.lat}</span>
+        <span className="text-gray-300">|</span>
+        <span>Lng: {coords.lng}</span>
+      </div>
+    </div>
+  );
+}
+
+// 3. Kontrol Gambar Leaflet Draw + Hitung Luas Otomatis Turf.js
 function DrawControl({
   onPolygonCreated,
   drawnItemsRef,
 }: {
-  onPolygonCreated: (geometry: any) => void;
+  onPolygonCreated: (geometry: any, calculatedAreaKm2: number) => void;
   drawnItemsRef: React.MutableRefObject<L.FeatureGroup | null>;
 }) {
   const map = useMap();
@@ -43,9 +85,15 @@ function DrawControl({
     drawnItemsRef.current = drawnItems;
 
     const drawControl = new L.Control.Draw({
+      position: 'topleft',
       draw: {
-        polygon: {},
-        rectangle: {},
+        polygon: {
+          allowIntersection: false,
+          showArea: true,
+        },
+        rectangle: {
+          showArea: true,
+        },
         polyline: false,
         circle: false,
         circlemarker: false,
@@ -64,7 +112,17 @@ function DrawControl({
       const layer = e.layer;
       drawnItems.addLayer(layer);
       const geojson = layer.toGeoJSON();
-      onPolygonCreated(geojson.geometry);
+
+      // Hitung luas area menggunakan Turf.js (m² diubah ke km²)
+      let calculatedAreaKm2 = 0;
+      try {
+        const areaInSqMeters = turf.area(geojson);
+        calculatedAreaKm2 = Number((areaInSqMeters / 1_000_000).toFixed(2));
+      } catch (err) {
+        console.error('Gagal menghitung luas area:', err);
+      }
+
+      onPolygonCreated(geojson.geometry, calculatedAreaKm2);
     };
 
     map.on(L.Draw.Event.CREATED, handleCreated);
@@ -79,7 +137,7 @@ function DrawControl({
   return null;
 }
 
-// Sub-Komponen Pengelola Layer GeoJSON & Pembersih Kanvas Lukis
+// 4. Layer Area Tersimpan dari Supabase
 function MonitoringAreasLayer({
   monitoringAreas,
   drawnItemsRef,
@@ -87,14 +145,12 @@ function MonitoringAreasLayer({
   monitoringAreas: MonitoringArea[];
   drawnItemsRef: React.MutableRefObject<L.FeatureGroup | null>;
 }) {
-  // Bersihkan lukisan sementara di kanvas setiap kali daftar area berubah (misal saat hapus/tambah)
   useEffect(() => {
     if (drawnItemsRef.current) {
       drawnItemsRef.current.clearLayers();
     }
   }, [monitoringAreas, drawnItemsRef]);
 
-  // Bungkus seluruh data Supabase menjadi satu FeatureCollection GeoJSON
   const geojsonFeatureCollection: GeoJSON.FeatureCollection = {
     type: 'FeatureCollection',
     features: monitoringAreas.map((area) => ({
@@ -110,7 +166,6 @@ function MonitoringAreasLayer({
     })),
   };
 
-  // Unique key berdasarkan gabungan ID agar React Leaflet merender ulang secara akurat
   const layerKey = monitoringAreas.map((a) => a.id).join('-');
 
   return (
@@ -125,13 +180,20 @@ function MonitoringAreasLayer({
       }}
       onEachFeature={(feature, layer) => {
         const props = feature.properties;
+        let areaKm2 = '0';
+        try {
+          const areaInSqMeters = turf.area(feature as any);
+          areaKm2 = (areaInSqMeters / 1_000_000).toLocaleString('id-ID', { maximumFractionDigits: 2 });
+        } catch {}
+
         const popupContent = `
-          <div class="p-1 space-y-1 text-sm font-sans">
-            <span class="text-xs font-semibold px-2 py-0.5 bg-emerald-100 text-emerald-800 rounded-full">
+          <div class="p-1 space-y-1.5 text-sm font-sans min-w-[180px]">
+            <span class="text-[11px] font-semibold px-2 py-0.5 bg-emerald-100 text-emerald-800 rounded-full inline-block">
               ${props.category}
             </span>
             <h3 class="font-bold text-gray-900 border-b pb-1 mt-1">${props.name}</h3>
-            <p class="text-gray-700 text-xs">${props.description || 'Tidak ada deskripsi.'}</p>
+            <p class="text-xs text-gray-600">📐 <b>Luas Area:</b> ${areaKm2} km²</p>
+            <p class="text-xs text-gray-700">${props.description || 'Tidak ada deskripsi.'}</p>
           </div>
         `;
         layer.bindPopup(popupContent);
@@ -140,17 +202,20 @@ function MonitoringAreasLayer({
   );
 }
 
+// 5. Komponen Utama Peta
 export default function MapComponent({ earthquakes, monitoringAreas, onAreaSaved }: MapComponentProps) {
   const indonesiaCenter: [number, number] = [-2.548926, 118.014863];
 
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [currentGeometry, setCurrentGeometry] = useState<any>(null);
+  const [calculatedArea, setCalculatedArea] = useState<number>(0);
   const [saving, setSaving] = useState(false);
 
   const drawnItemsRef = useRef<L.FeatureGroup | null>(null);
 
-  const handlePolygonCreated = (geometry: any) => {
+  const handlePolygonCreated = (geometry: any, areaKm2: number) => {
     setCurrentGeometry(geometry);
+    setCalculatedArea(areaKm2);
     setIsModalOpen(true);
   };
 
@@ -158,10 +223,14 @@ export default function MapComponent({ earthquakes, monitoringAreas, onAreaSaved
     if (!currentGeometry) return;
     setSaving(true);
     try {
+      const enhancedDescription = formData.description 
+        ? `${formData.description} (Estimasi Luas: ${calculatedArea} km²)`
+        : `Estimasi Luas Wilayah: ${calculatedArea} km²`;
+
       await createMonitoringArea({
         name: formData.name,
         category: formData.category,
-        description: formData.description,
+        description: enhancedDescription,
         geometry: currentGeometry,
       });
 
@@ -172,7 +241,7 @@ export default function MapComponent({ earthquakes, monitoringAreas, onAreaSaved
       setIsModalOpen(false);
       setCurrentGeometry(null);
       onAreaSaved();
-      alert('Area Pantauan Berhasil Disimpan ke Supabase!');
+      alert(`Area Pantauan "${formData.name}" (Luas: ${calculatedArea} km²) Berhasil Disimpan!`);
     } catch (err: any) {
       alert('Gagal menyimpan area: ' + err.message);
     } finally {
@@ -194,17 +263,37 @@ export default function MapComponent({ earthquakes, monitoringAreas, onAreaSaved
         center={indonesiaCenter}
         zoom={5}
         scrollWheelZoom={true}
-        className="w-full h-full min-h-[500px] z-0 rounded-lg shadow-inner"
+        className="w-full h-full min-h-[550px] z-0 rounded-lg shadow-inner relative"
       >
-        <TileLayer
-          attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-          url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-        />
+        {/* Layer Switcher (Pilihan Basemap Standar GIS) */}
+        <LayersControl position="topright">
+          <BaseLayer checked name="🗺️ OpenStreetMap (Default)">
+            <TileLayer
+              attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+              url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+            />
+          </BaseLayer>
+          <BaseLayer name="🛰️ Citra Satelit (ESRI World Imagery)">
+            <TileLayer
+              attribution='Tiles &copy; Esri &mdash; Source: Esri, i-cubed, USDA, USGS, AEX, GeoEye, Getmapping, Aerogrid, IGN, IGP, UPR-EGP, and the GIS User Community'
+              url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
+            />
+          </BaseLayer>
+          <BaseLayer name="🏔️ Topografi (OpenTopoMap)">
+            <TileLayer
+              attribution='Map data: &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors, <a href="http://viewfinderpanoramas.org">SRTM</a> | Map style: &copy; <a href="https://opentopomap.org">OpenTopoMap</a>'
+              url="https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png"
+            />
+          </BaseLayer>
+        </LayersControl>
 
-        {/* Alat Lukis Digitasi Polygon */}
+        {/* Pelacak Koordinat Kursor Real-Time */}
+        <CursorCoordinatesControl />
+
+        {/* Kontrol Gambar Digitasi Polygon */}
         <DrawControl onPolygonCreated={handlePolygonCreated} drawnItemsRef={drawnItemsRef} />
 
-        {/* Layer Area Pantauan Supabase & Pembersih Kanvas */}
+        {/* Layer GeoJSON Supabase */}
         <MonitoringAreasLayer monitoringAreas={monitoringAreas} drawnItemsRef={drawnItemsRef} />
 
         {/* Titik Gempa USGS */}
@@ -232,16 +321,16 @@ export default function MapComponent({ earthquakes, monitoringAreas, onAreaSaved
                   <p className="text-gray-700">
                     <span className="font-semibold">Magnitudo:</span>{' '}
                     <span
-                      className="font-bold px-1.5 py-0.5 rounded text-white"
+                      className="font-bold px-1.5 py-0.5 rounded text-white text-xs"
                       style={{ backgroundColor: color }}
                     >
                       M {item.properties.mag}
                     </span>
                   </p>
-                  <p className="text-gray-700">
+                  <p className="text-gray-700 text-xs">
                     <span className="font-semibold">Kedalaman:</span> {depth} km
                   </p>
-                  <p className="text-gray-700">
+                  <p className="text-gray-700 text-xs">
                     <span className="font-semibold">Waktu:</span>{' '}
                     {new Date(item.properties.time).toLocaleString('id-ID')}
                   </p>
