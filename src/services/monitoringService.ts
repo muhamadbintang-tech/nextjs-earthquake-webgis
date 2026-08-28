@@ -1,4 +1,4 @@
-import { supabase } from '@/lib/supabaseClient';
+import { supabase } from '../lib/supabaseClient';
 import { MonitoringArea } from '@/types/monitoring';
 
 // 1. Mengambil seluruh data area pantauan dari Supabase
@@ -15,7 +15,6 @@ export async function getMonitoringAreas(): Promise<MonitoringArea[]> {
   return data || [];
 }
 
-// Alias agar tidak error jika dipanggil dengan nama fetchMonitoringAreas
 export const fetchMonitoringAreas = getMonitoringAreas;
 
 // 2. Menyimpan area pantauan baru ke Supabase
@@ -38,7 +37,26 @@ export async function createMonitoringArea(areaData: {
   return data;
 }
 
-// 3. Menghapus area pantauan berdasarkan ID
+// 3. Mengubah / Update area pantauan di Supabase
+export async function updateMonitoringArea(
+  id: string,
+  updates: { name: string; category: string; description: string }
+): Promise<MonitoringArea> {
+  const { data, error } = await supabase
+    .from('monitoring_areas')
+    .update(updates)
+    .eq('id', id)
+    .select()
+    .single();
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return data;
+}
+
+// 4. Menghapus area pantauan berdasarkan ID
 export async function deleteMonitoringArea(id: string): Promise<void> {
   const { error } = await supabase
     .from('monitoring_areas')

@@ -8,6 +8,7 @@ import { EarthquakeFeature } from '@/types/earthquake';
 interface AreaTableProps {
   areas: MonitoringArea[];
   earthquakes: EarthquakeFeature[];
+  onEdit: (area: MonitoringArea) => void;
   onDelete: (id: string, name: string) => void;
   deletingId?: string | null;
 }
@@ -15,6 +16,7 @@ interface AreaTableProps {
 export default function AreaTable({
   areas,
   earthquakes,
+  onEdit,
   onDelete,
   deletingId,
 }: AreaTableProps) {
@@ -55,10 +57,15 @@ export default function AreaTable({
       geometry: area.geometry,
     };
 
-    const dataStr = 'data:text/json;charset=utf-8,' + encodeURIComponent(JSON.stringify(geojsonData, null, 2));
+    const dataStr =
+      'data:text/json;charset=utf-8,' +
+      encodeURIComponent(JSON.stringify(geojsonData, null, 2));
     const downloadAnchor = document.createElement('a');
     downloadAnchor.setAttribute('href', dataStr);
-    downloadAnchor.setAttribute('download', `${area.name.toLowerCase().replace(/\s+/g, '-')}-area.geojson`);
+    downloadAnchor.setAttribute(
+      'download',
+      `${area.name.toLowerCase().replace(/\s+/g, '-')}-area.geojson`
+    );
     document.body.appendChild(downloadAnchor);
     downloadAnchor.click();
     downloadAnchor.remove();
@@ -83,10 +90,15 @@ export default function AreaTable({
       })),
     };
 
-    const dataStr = 'data:text/json;charset=utf-8,' + encodeURIComponent(JSON.stringify(featureCollection, null, 2));
+    const dataStr =
+      'data:text/json;charset=utf-8,' +
+      encodeURIComponent(JSON.stringify(featureCollection, null, 2));
     const downloadAnchor = document.createElement('a');
     downloadAnchor.setAttribute('href', dataStr);
-    downloadAnchor.setAttribute('download', `semua-area-pantauan-${new Date().toISOString().split('T')[0]}.geojson`);
+    downloadAnchor.setAttribute(
+      'download',
+      `semua-area-pantauan-${new Date().toISOString().split('T')[0]}.geojson`
+    );
     document.body.appendChild(downloadAnchor);
     downloadAnchor.click();
     downloadAnchor.remove();
@@ -162,6 +174,16 @@ export default function AreaTable({
                       </span>
                     </td>
                     <td className="py-3 px-4 text-right space-x-2 whitespace-nowrap">
+                      {/* Tombol Edit */}
+                      <button
+                        onClick={() => onEdit(area)}
+                        title="Edit Informasi Area"
+                        className="px-2.5 py-1 text-xs font-medium bg-amber-50 hover:bg-amber-100 text-amber-700 rounded-md transition-colors"
+                      >
+                        ✏️ Edit
+                      </button>
+
+                      {/* Tombol Export */}
                       <button
                         onClick={() => handleExportSingleGeoJSON(area)}
                         title="Unduh GeoJSON"
@@ -170,6 +192,7 @@ export default function AreaTable({
                         Export
                       </button>
 
+                      {/* Tombol Hapus */}
                       <button
                         onClick={() => area.id && onDelete(String(area.id), area.name)}
                         disabled={deletingId === area.id}

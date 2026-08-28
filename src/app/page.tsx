@@ -2,13 +2,18 @@
 
 import React, { useEffect, useState, useMemo } from 'react';
 import dynamic from 'next/dynamic';
-import { getEarthquakes } from '../services/earthquakeService';
-import { getMonitoringAreas, deleteMonitoringArea } from '@/services/monitoringService';
+import { getEarthquakes } from '@/services/earthquakeService';
+import {
+  getMonitoringAreas,
+  deleteMonitoringArea,
+  updateMonitoringArea,
+} from '@/services/monitoringService';
 import { EarthquakeFeature } from '@/types/earthquake';
 import { MonitoringArea } from '@/types/monitoring';
 import AreaTable from '@/components/dashboard/AreaTable';
+import EditAreaModal from '@/components/dashboard/EditAreaModal';
 
-// Dynamic import MapComponent untuk menghindari kendala SSR di Next.js
+// Dynamic import MapComponent untuk menghindari SSR di Next.js
 const MapComponent = dynamic(() => import('@/components/map/MapComponent'), {
   ssr: false,
   loading: () => (
@@ -27,10 +32,15 @@ export default function Home() {
   const [error, setError] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
+  // State Edit Modal
+  const [editingArea, setEditingArea] = useState<MonitoringArea | null>(null);
+  const [isEditModalOpen, setIsEditModalOpen] = useState<boolean>(false);
+  const [updating, setUpdating] = useState<boolean>(false);
+
   // State Filter
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [minMagnitude, setMinMagnitude] = useState<number>(0);
-  const [timeRangeHours, setTimeRangeHours] = useState<number>(0); // 0 = Semua Waktu
+  const [timeRangeHours, setTimeRangeHours] = useState<number>(0);
 
   // Mengambil data gempa dan area pantauan
   const loadData = async () => {
@@ -56,21 +66,18 @@ export default function Home() {
     loadData();
   }, []);
 
-  // Filter Gempa berdasarkan Input User
+  // Filter Gempa
   const filteredEarthquakes = useMemo(() => {
     const now = Date.now();
 
     return earthquakes.filter((item) => {
-      // 1. Filter Pencarian Lokasi
       const matchSearch =
         !searchQuery ||
         item.properties.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
         item.properties.place?.toLowerCase().includes(searchQuery.toLowerCase());
 
-      // 2. Filter Magnitudo
       const matchMag = item.properties.mag >= minMagnitude;
 
-      // 3. Filter Rentang Waktu
       let matchTime = true;
       if (timeRangeHours > 0) {
         const diffInHours = (now - item.properties.time) / (1000 * 60 * 60);
@@ -81,9 +88,38 @@ export default function Home() {
     });
   }, [earthquakes, searchQuery, minMagnitude, timeRangeHours]);
 
+  // Handler Buka Edit Modal
+  const handleOpenEdit = (area: MonitoringArea) => {
+    setEditingArea(area);
+    setIsEditModalOpen(true);
+  };
+
+  // Handler Simpan Perubahan Area
+  const handleSaveEdit = async (
+    id: string,
+    updatedData: { name: string; category: string; description: string }
+  ) => {
+    setUpdating(true);
+    try {
+      const updated = await updateMonitoringArea(id, updatedData);
+      setMonitoringAreas((prev) =>
+        prev.map((item) => (item.id === id ? { ...item, ...updated } : item))
+      );
+      setIsEditModalOpen(false);
+      setEditingArea(null);
+      alert(`Informasi area "${updatedData.name}" berhasil diperbarui!`);
+    } catch (err: any) {
+      alert('Gagal mengubah data: ' + err.message);
+    } finally {
+      setUpdating(false);
+    }
+  };
+
   // Handler Hapus Area
   const handleDeleteArea = async (id: string, name: string) => {
-    const isConfirm = window.confirm(`Apakah Anda yakin ingin menghapus area pantauan "${name}"?`);
+    const isConfirm = window.confirm(
+      `Apakah Anda yakin ingin menghapus area pantauan "${name}"?`
+    );
     if (!isConfirm) return;
 
     setDeletingId(id);
@@ -167,7 +203,6 @@ export default function Home() {
         </h2>
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          {/* Input Pencarian Wilayah */}
           <div>
             <label className="block text-xs font-semibold text-gray-600 mb-1">Cari Lokasi / Wilayah</label>
             <input
@@ -179,7 +214,6 @@ export default function Home() {
             />
           </div>
 
-          {/* Filter Magnitudo */}
           <div>
             <label className="block text-xs font-semibold text-gray-600 mb-1">Batas Kekuatan (Magnitudo)</label>
             <select
@@ -194,7 +228,6 @@ export default function Home() {
             </select>
           </div>
 
-          {/* Filter Rentang Waktu */}
           <div>
             <label className="block text-xs font-semibold text-gray-600 mb-1">Rentang Waktu</label>
             <select
@@ -234,15 +267,25 @@ export default function Home() {
         )}
       </section>
 
-      {/* Tabel Data Area Pantauan & Analisis Spasial */}
+      {/* Tabel Data Area Pantauan */}
       <section>
         <AreaTable
           areas={monitoringAreas}
           earthquakes={filteredEarthquakes}
+          onEdit={handleOpenEdit}
           onDelete={handleDeleteArea}
           deletingId={deletingId}
         />
       </section>
+
+      {/* Modal Edit Area */}
+      <EditAreaModal
+        isOpen={isEditModalOpen}
+        onClose={() => setIsEditModalOpen(false)}
+        area={editingArea}
+        onSave={handleSaveEdit}
+        loading={updating}
+      />
     </main>
   );
 }
