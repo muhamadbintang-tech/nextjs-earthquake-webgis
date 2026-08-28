@@ -1,45 +1,51 @@
-import { supabase } from '@/lib/supabase';
+import { supabase } from '@/lib/supabaseClient';
 import { MonitoringArea } from '@/types/monitoring';
 
-// 1. Ambil Semua Data Area dari Supabase
-export async function fetchMonitoringAreas(): Promise<MonitoringArea[]> {
+// 1. Mengambil seluruh data area pantauan dari Supabase
+export async function getMonitoringAreas(): Promise<MonitoringArea[]> {
   const { data, error } = await supabase
     .from('monitoring_areas')
     .select('*')
     .order('created_at', { ascending: false });
 
   if (error) {
-    throw new Error(`Gagal mengambil data area: ${error.message}`);
+    throw new Error(error.message);
   }
 
   return data || [];
 }
 
-// 2. Simpan Area Baru ke Supabase
-export async function createMonitoringArea(area: Omit<MonitoringArea, 'id' | 'created_at'>): Promise<MonitoringArea> {
+// Alias agar tidak error jika dipanggil dengan nama fetchMonitoringAreas
+export const fetchMonitoringAreas = getMonitoringAreas;
+
+// 2. Menyimpan area pantauan baru ke Supabase
+export async function createMonitoringArea(areaData: {
+  name: string;
+  category: string;
+  description: string;
+  geometry: any;
+}): Promise<MonitoringArea> {
   const { data, error } = await supabase
     .from('monitoring_areas')
-    .insert([area])
+    .insert([areaData])
     .select()
     .single();
 
   if (error) {
-    throw new Error(`Gagal menyimpan area: ${error.message}`);
+    throw new Error(error.message);
   }
 
   return data;
 }
 
-// 3. Hapus Area Berdasarkan ID dari Supabase
-export async function deleteMonitoringArea(id: string): Promise<boolean> {
+// 3. Menghapus area pantauan berdasarkan ID
+export async function deleteMonitoringArea(id: string): Promise<void> {
   const { error } = await supabase
     .from('monitoring_areas')
     .delete()
     .eq('id', id);
 
   if (error) {
-    throw new Error(`Gagal menghapus area: ${error.message}`);
+    throw new Error(error.message);
   }
-
-  return true;
 }
