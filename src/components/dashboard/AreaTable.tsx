@@ -105,9 +105,14 @@ export default function AreaTable({
     <div className="bg-white dark:bg-slate-900 rounded-xl shadow-sm border border-gray-100 dark:border-slate-800 p-6 space-y-4 transition-colors">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
         <div>
-          <h2 className="text-lg font-bold text-gray-800 dark:text-white flex items-center gap-2">
-            <span>📋</span> Daftar Area Pantauan Tersimpan
-          </h2>
+          <div className="flex items-center gap-2 flex-wrap">
+            <h2 className="text-lg font-bold text-gray-800 dark:text-white flex items-center gap-2">
+              <span>📋</span> Daftar Area Pantauan Tersimpan
+            </h2>
+            <span className="px-2 py-0.5 text-[10px] font-extrabold uppercase tracking-wide bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800 rounded-md">
+              PostGIS Enabled 🌐
+            </span>
+          </div>
           <p className="text-xs text-gray-500 dark:text-slate-400 mt-0.5">
             Data zonasi polygon tersimpan di Supabase beserta analisis spasial kejadian gempa.
           </p>

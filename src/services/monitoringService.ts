@@ -17,7 +17,7 @@ export async function getMonitoringAreas(): Promise<MonitoringArea[]> {
 
 export const fetchMonitoringAreas = getMonitoringAreas;
 
-// 2. Menyimpan area pantauan baru ke Supabase
+// 2. Menyimpan area pantauan baru ke Supabase (Otomatis memicu trigger PostGIS geom)
 export async function createMonitoringArea(areaData: {
   name: string;
   category: string;
@@ -65,5 +65,23 @@ export async function deleteMonitoringArea(id: string): Promise<void> {
 
   if (error) {
     throw new Error(error.message);
+  }
+}
+
+// 5. Fungsi PostGIS Spasial via Supabase RPC (Menghitung Luas Berbasis PostGIS Native)
+export async function getPostgisCalculatedArea(areaId: string): Promise<number | null> {
+  try {
+    const { data, error } = await supabase.rpc('get_postgis_area_km2', {
+      area_id: areaId,
+    });
+
+    if (error) {
+      console.warn('PostGIS RPC note:', error.message);
+      return null;
+    }
+
+    return data ? Number(data.toFixed(2)) : null;
+  } catch {
+    return null;
   }
 }
