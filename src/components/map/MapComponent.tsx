@@ -5,6 +5,7 @@ import {
   MapContainer,
   TileLayer,
   CircleMarker,
+  Marker,
   Popup,
   GeoJSON,
   LayersControl,
@@ -19,25 +20,57 @@ import * as turf from '@turf/turf';
 
 import { EarthquakeFeature } from '@/types/earthquake';
 import { MonitoringArea } from '@/types/monitoring';
+import { MonitoringPoint } from '@/types/point';
 import AreaModal from './AreaModal';
+import PointModal from './PointModal';
 import { createMonitoringArea } from '@/services/monitoringService';
+import { createMonitoringPoint } from '@/services/pointService';
 
 const { BaseLayer } = LayersControl;
 
 interface MapComponentProps {
   earthquakes: EarthquakeFeature[];
   monitoringAreas: MonitoringArea[];
+  monitoringPoints: MonitoringPoint[];
   onAreaSaved: () => void;
+  onPointSaved: () => void;
 }
 
-// 1. Helper Warna Marker Gempa
+// 1. Helper Warna Marker Gempa USGS
 function getMarkerColor(mag: number): string {
   if (mag >= 5.0) return '#ef4444'; // Merah
   if (mag >= 3.0) return '#f59e0b'; // Oranye
   return '#10b981'; // Hijau
 }
 
-// 2. Kontrol Koordinat Kursor Real-Time
+// 2. Helper Icon Kustom untuk Titik Pantauan Supabase (Bebas Masalah Aset Gambar)
+function createPointIcon(category: string) {
+  let emoji = '📍';
+  let bgColor = 'bg-blue-600';
+
+  if (category === 'Posko Evakuasi') {
+    emoji = '🏕️';
+    bgColor = 'bg-emerald-600';
+  } else if (category === 'Sensor Seismik BMKG') {
+    emoji = '📡';
+    bgColor = 'bg-purple-600';
+  } else if (category === 'Fasilitas Medis Darurat') {
+    emoji = '🏥';
+    bgColor = 'bg-rose-600';
+  } else if (category === 'Stasiun Logistik') {
+    emoji = '📦';
+    bgColor = 'bg-amber-600';
+  }
+
+  return L.divIcon({
+    html: `<div class="w-8 h-8 rounded-full ${bgColor} text-white flex items-center justify-center shadow-lg border-2 border-white text-base transform hover:scale-125 transition-transform cursor-pointer">${emoji}</div>`,
+    className: 'custom-point-marker',
+    iconSize: [32, 32],
+    iconAnchor: [16, 16],
+  });
+}
+
+// 3. Kontrol Koordinat Kursor Real-Time
 function CursorCoordinatesControl() {
   const [coords, setCoords] = useState<{ lat: number; lng: number } | null>(null);
 
@@ -67,12 +100,14 @@ function CursorCoordinatesControl() {
   );
 }
 
-// 3. Kontrol Gambar Leaflet Draw + Hitung Luas Otomatis Turf.js
+// 4. Kontrol Gambar Leaflet Draw (Mendukung Polygon & Titik/Marker)
 function DrawControl({
   onPolygonCreated,
+  onPointCreated,
   drawnItemsRef,
 }: {
   onPolygonCreated: (geometry: any, calculatedAreaKm2: number) => void;
+  onPointCreated: (coords: { lat: number; lng: number }) => void;
   drawnItemsRef: React.MutableRefObject<L.FeatureGroup | null>;
 }) {
   const map = useMap();
@@ -94,10 +129,10 @@ function DrawControl({
         rectangle: {
           showArea: true,
         },
+        marker: true, // Mengaktifkan alat gambar titik/marker
         polyline: false,
         circle: false,
         circlemarker: false,
-        marker: false,
       },
       edit: {
         featureGroup: drawnItems,
@@ -110,18 +145,25 @@ function DrawControl({
 
     const handleCreated = (e: any) => {
       const layer = e.layer;
-      drawnItems.addLayer(layer);
-      const geojson = layer.toGeoJSON();
+      const type = e.layerType;
 
-      let calculatedAreaKm2 = 0;
-      try {
-        const areaInSqMeters = turf.area(geojson);
-        calculatedAreaKm2 = Number((areaInSqMeters / 1_000_000).toFixed(2));
-      } catch (err) {
-        console.error('Gagal menghitung luas area:', err);
+      if (type === 'marker') {
+        const latlng = layer.getLatLng();
+        onPointCreated({ lat: latlng.lat, lng: latlng.lng });
+      } else {
+        drawnItems.addLayer(layer);
+        const geojson = layer.toGeoJSON();
+
+        let calculatedAreaKm2 = 0;
+        try {
+          const areaInSqMeters = turf.area(geojson);
+          calculatedAreaKm2 = Number((areaInSqMeters / 1_000_000).toFixed(2));
+        } catch (err) {
+          console.error('Gagal menghitung luas area:', err);
+        }
+
+        onPolygonCreated(geojson.geometry, calculatedAreaKm2);
       }
-
-      onPolygonCreated(geojson.geometry, calculatedAreaKm2);
     };
 
     map.on(L.Draw.Event.CREATED, handleCreated);
@@ -131,12 +173,12 @@ function DrawControl({
       map.off(L.Draw.Event.CREATED, handleCreated);
       drawnItemsRef.current = null;
     };
-  }, [map, onPolygonCreated, drawnItemsRef]);
+  }, [map, onPolygonCreated, onPointCreated, drawnItemsRef]);
 
   return null;
 }
 
-// 4. Layer Area Tersimpan dari Supabase
+// 5. Layer Area Polygon Tersimpan dari Supabase
 function MonitoringAreasLayer({
   monitoringAreas,
   drawnItemsRef,
@@ -201,28 +243,41 @@ function MonitoringAreasLayer({
   );
 }
 
-// 5. Komponen Utama Peta
-export default function MapComponent({ earthquakes, monitoringAreas, onAreaSaved }: MapComponentProps) {
+// 6. Komponen Utama Peta
+export default function MapComponent({
+  earthquakes,
+  monitoringAreas,
+  monitoringPoints,
+  onAreaSaved,
+  onPointSaved,
+}: MapComponentProps) {
   const indonesiaCenter: [number, number] = [-2.548926, 118.014863];
 
-  const [isModalOpen, setIsModalOpen] = useState(false);
+  // State Modal Polygon
+  const [isAreaModalOpen, setIsAreaModalOpen] = useState(false);
   const [currentGeometry, setCurrentGeometry] = useState<any>(null);
   const [calculatedArea, setCalculatedArea] = useState<number>(0);
-  const [saving, setSaving] = useState(false);
+  const [savingArea, setSavingArea] = useState(false);
+
+  // State Modal Titik
+  const [isPointModalOpen, setIsPointModalOpen] = useState(false);
+  const [currentPointCoords, setCurrentPointCoords] = useState<{ lat: number; lng: number } | null>(null);
+  const [savingPoint, setSavingPoint] = useState(false);
 
   const drawnItemsRef = useRef<L.FeatureGroup | null>(null);
 
+  // Handler Polygon
   const handlePolygonCreated = (geometry: any, areaKm2: number) => {
     setCurrentGeometry(geometry);
     setCalculatedArea(areaKm2);
-    setIsModalOpen(true);
+    setIsAreaModalOpen(true);
   };
 
   const handleSaveArea = async (formData: { name: string; category: string; description: string }) => {
     if (!currentGeometry) return;
-    setSaving(true);
+    setSavingArea(true);
     try {
-      const enhancedDescription = formData.description 
+      const enhancedDescription = formData.description
         ? `${formData.description} (Estimasi Luas: ${calculatedArea} km²)`
         : `Estimasi Luas Wilayah: ${calculatedArea} km²`;
 
@@ -237,23 +292,44 @@ export default function MapComponent({ earthquakes, monitoringAreas, onAreaSaved
         drawnItemsRef.current.clearLayers();
       }
 
-      setIsModalOpen(false);
+      setIsAreaModalOpen(false);
       setCurrentGeometry(null);
       onAreaSaved();
       alert(`Area Pantauan "${formData.name}" (Luas: ${calculatedArea} km²) Berhasil Disimpan!`);
     } catch (err: any) {
       alert('Gagal menyimpan area: ' + err.message);
     } finally {
-      setSaving(false);
+      setSavingArea(false);
     }
   };
 
-  const handleModalClose = () => {
-    if (drawnItemsRef.current) {
-      drawnItemsRef.current.clearLayers();
+  // Handler Titik Pantauan
+  const handlePointCreated = (coords: { lat: number; lng: number }) => {
+    setCurrentPointCoords(coords);
+    setIsPointModalOpen(true);
+  };
+
+  const handleSavePoint = async (data: { name: string; category: string; notes: string }) => {
+    if (!currentPointCoords) return;
+    setSavingPoint(true);
+    try {
+      await createMonitoringPoint({
+        name: data.name,
+        category: data.category,
+        notes: data.notes,
+        latitude: currentPointCoords.lat,
+        longitude: currentPointCoords.lng,
+      });
+
+      setIsPointModalOpen(false);
+      setCurrentPointCoords(null);
+      onPointSaved();
+      alert(`Titik Pantauan "${data.name}" Berhasil Disimpan ke Supabase!`);
+    } catch (err: any) {
+      alert('Gagal menyimpan titik: ' + err.message);
+    } finally {
+      setSavingPoint(false);
     }
-    setIsModalOpen(false);
-    setCurrentGeometry(null);
   };
 
   return (
@@ -264,7 +340,6 @@ export default function MapComponent({ earthquakes, monitoringAreas, onAreaSaved
         scrollWheelZoom={true}
         className="w-full h-full min-h-[550px] z-0 rounded-lg shadow-inner relative"
       >
-        {/* Layer Switcher */}
         <LayersControl position="topright">
           <BaseLayer checked name="🌑 CartoDB Dark (Dark Mode)">
             <TileLayer
@@ -280,26 +355,52 @@ export default function MapComponent({ earthquakes, monitoringAreas, onAreaSaved
           </BaseLayer>
           <BaseLayer name="🛰️ Citra Satelit (ESRI)">
             <TileLayer
-              attribution='Tiles &copy; Esri &mdash; Source: Esri, i-cubed, USDA, USGS, AEX, GeoEye, Getmapping, Aerogrid, IGN, IGP, UPR-EGP, and the GIS User Community'
+              attribution='Tiles &copy; Esri'
               url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
             />
           </BaseLayer>
           <BaseLayer name="🏔️ Topografi (OpenTopoMap)">
             <TileLayer
-              attribution='Map data: &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors, <a href="http://viewfinderpanoramas.org">SRTM</a> | Map style: &copy; <a href="https://opentopomap.org">OpenTopoMap</a>'
+              attribution='Map data: &copy; OpenStreetMap contributors, SRTM'
               url="https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png"
             />
           </BaseLayer>
         </LayersControl>
 
-        {/* Pelacak Koordinat */}
+        {/* Pelacak Koordinat Kursor */}
         <CursorCoordinatesControl />
 
-        {/* Kontrol Gambar Digitasi Polygon */}
-        <DrawControl onPolygonCreated={handlePolygonCreated} drawnItemsRef={drawnItemsRef} />
+        {/* Kontrol Gambar (Polygon & Marker Titik) */}
+        <DrawControl
+          onPolygonCreated={handlePolygonCreated}
+          onPointCreated={handlePointCreated}
+          drawnItemsRef={drawnItemsRef}
+        />
 
-        {/* Layer GeoJSON Supabase */}
+        {/* Layer Area Polygon Supabase */}
         <MonitoringAreasLayer monitoringAreas={monitoringAreas} drawnItemsRef={drawnItemsRef} />
+
+        {/* Layer Titik Pantauan Supabase */}
+        {monitoringPoints.map((point) => (
+          <Marker
+            key={point.id || `${point.latitude}-${point.longitude}`}
+            position={[point.latitude, point.longitude]}
+            icon={createPointIcon(point.category)}
+          >
+            <Popup>
+              <div className="p-1 space-y-1 text-sm font-sans min-w-[180px]">
+                <span className="text-[11px] font-semibold px-2 py-0.5 bg-blue-100 text-blue-800 rounded-full inline-block">
+                  {point.category}
+                </span>
+                <h3 className="font-bold text-gray-900 border-b pb-1 mt-1">{point.name}</h3>
+                <p className="text-xs text-gray-600">
+                  📍 <b>Koordinat:</b> {point.latitude.toFixed(4)}, {point.longitude.toFixed(4)}
+                </p>
+                {point.notes && <p className="text-xs text-gray-700 mt-1">📝 {point.notes}</p>}
+              </div>
+            </Popup>
+          </Marker>
+        ))}
 
         {/* Titik Gempa USGS */}
         {earthquakes.map((item) => {
@@ -346,12 +447,28 @@ export default function MapComponent({ earthquakes, monitoringAreas, onAreaSaved
         })}
       </MapContainer>
 
-      {/* Modal Input Data Area */}
+      {/* Modal Input Polygon */}
       <AreaModal
-        isOpen={isModalOpen}
-        onClose={handleModalClose}
+        isOpen={isAreaModalOpen}
+        onClose={() => {
+          if (drawnItemsRef.current) drawnItemsRef.current.clearLayers();
+          setIsAreaModalOpen(false);
+          setCurrentGeometry(null);
+        }}
         onSave={handleSaveArea}
-        loading={saving}
+        loading={savingArea}
+      />
+
+      {/* Modal Input Titik Pantauan */}
+      <PointModal
+        isOpen={isPointModalOpen}
+        onClose={() => {
+          setIsPointModalOpen(false);
+          setCurrentPointCoords(null);
+        }}
+        onSave={handleSavePoint}
+        loading={savingPoint}
+        coords={currentPointCoords}
       />
     </>
   );
