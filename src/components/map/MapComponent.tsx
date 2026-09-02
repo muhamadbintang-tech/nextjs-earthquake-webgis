@@ -126,13 +126,11 @@ function DrawControl({
           allowIntersection: false,
           showArea: true,
         },
-        rectangle: {
+       rectangle: {
           showArea: true,
         },
-        marker: true, // Mengaktifkan alat gambar titik/marker
+        marker: {},
         polyline: false,
-        circle: false,
-        circlemarker: false,
       },
       edit: {
         featureGroup: drawnItems,

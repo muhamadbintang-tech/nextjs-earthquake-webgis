@@ -2,6 +2,7 @@
 
 import React, { useEffect, useState, useMemo } from 'react';
 import dynamic from 'next/dynamic';
+import { supabase } from '../lib/supabaseClient';
 import { getEarthquakes } from '@/services/earthquakeService';
 import {
   getMonitoringAreas,
@@ -17,8 +18,9 @@ import { MonitoringArea } from '@/types/monitoring';
 import { MonitoringPoint } from '@/types/point';
 import AreaTable from '@/components/dashboard/AreaTable';
 import EditAreaModal from '@/components/dashboard/EditAreaModal';
+import AuthModal from '@/components/auth/AuthModal';
 
-// Dynamic import MapComponent
+// Dynamic import MapComponent untuk menghindari SSR di Next.js
 const MapComponent = dynamic(() => import('@/components/map/MapComponent'), {
   ssr: false,
   loading: () => (
@@ -30,23 +32,12 @@ const MapComponent = dynamic(() => import('@/components/map/MapComponent'), {
 });
 
 export default function Home() {
+  // State Autentikasi Supabase
+  const [user, setUser] = useState<any>(null);
+  const [isAuthModalOpen, setIsAuthModalOpen] = useState<boolean>(false);
+
   // State Dark Mode
   const [darkMode, setDarkMode] = useState<boolean>(false);
-
-  useEffect(() => {
-    const savedTheme = localStorage.getItem('theme');
-    if (savedTheme === 'dark' || (!savedTheme && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
-      setDarkMode(true);
-    }
-  }, []);
-
-  const toggleDarkMode = () => {
-    setDarkMode((prev) => {
-      const nextMode = !prev;
-      localStorage.setItem('theme', nextMode ? 'dark' : 'light');
-      return nextMode;
-    });
-  };
 
   // State Data
   const [earthquakes, setEarthquakes] = useState<EarthquakeFeature[]>([]);
@@ -65,6 +56,43 @@ export default function Home() {
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [minMagnitude, setMinMagnitude] = useState<number>(0);
   const [timeRangeHours, setTimeRangeHours] = useState<number>(0);
+
+  // Inisialisasi Tema
+  useEffect(() => {
+    const savedTheme = localStorage.getItem('theme');
+    if (savedTheme === 'dark' || (!savedTheme && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
+      setDarkMode(true);
+    }
+  }, []);
+
+  // Inisialisasi Autentikasi Supabase
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setUser(session?.user ?? null);
+    });
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      setUser(session?.user ?? null);
+    });
+
+    return () => subscription.unsubscribe();
+  }, []);
+
+  const toggleDarkMode = () => {
+    setDarkMode((prev) => {
+      const nextMode = !prev;
+      localStorage.setItem('theme', nextMode ? 'dark' : 'light');
+      return nextMode;
+    });
+  };
+
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
+    setUser(null);
+    alert('Anda telah berhasil keluar (logout).');
+  };
 
   const loadData = async () => {
     setLoading(true);
@@ -112,7 +140,13 @@ export default function Home() {
     });
   }, [earthquakes, searchQuery, minMagnitude, timeRangeHours]);
 
+  // Proteksi Aksi: Edit Area
   const handleOpenEdit = (area: MonitoringArea) => {
+    if (!user) {
+      alert('Silakan login terlebih dahulu untuk mengedit data area pantauan!');
+      setIsAuthModalOpen(true);
+      return;
+    }
     setEditingArea(area);
     setIsEditModalOpen(true);
   };
@@ -137,7 +171,14 @@ export default function Home() {
     }
   };
 
+  // Proteksi Aksi: Hapus Area
   const handleDeleteArea = async (id: string, name: string) => {
+    if (!user) {
+      alert('Silakan login terlebih dahulu untuk menghapus data!');
+      setIsAuthModalOpen(true);
+      return;
+    }
+
     const isConfirm = window.confirm(
       `Apakah Anda yakin ingin menghapus area pantauan "${name}"?`
     );
@@ -154,7 +195,14 @@ export default function Home() {
     }
   };
 
+  // Proteksi Aksi: Hapus Titik
   const handleDeletePoint = async (id: string, name: string) => {
+    if (!user) {
+      alert('Silakan login terlebih dahulu untuk menghapus titik!');
+      setIsAuthModalOpen(true);
+      return;
+    }
+
     const isConfirm = window.confirm(
       `Hapus titik pantauan "${name}" dari Supabase?`
     );
@@ -172,33 +220,58 @@ export default function Home() {
     <div className={darkMode ? 'dark' : ''}>
       <main className="min-h-screen bg-slate-50 dark:bg-slate-950 text-gray-800 dark:text-slate-100 p-4 sm:p-6 lg:p-8 space-y-6 max-w-7xl mx-auto transition-colors duration-300">
         {/* Header Utama */}
-        <header className="flex flex-col sm:flex-row sm:items-center sm:justify-between bg-white dark:bg-slate-900 rounded-xl shadow-sm border border-gray-100 dark:border-slate-800 p-6 gap-4 transition-colors">
+        <header className="flex flex-col md:flex-row md:items-center md:justify-between bg-white dark:bg-slate-900 rounded-xl shadow-sm border border-gray-100 dark:border-slate-800 p-6 gap-4 transition-colors">
           <div>
             <h1 className="text-2xl font-black text-gray-900 dark:text-white flex items-center gap-2">
               <span className="text-emerald-500">🌐</span> Earthquake Monitoring WebGIS
             </h1>
             <p className="text-xs sm:text-sm text-gray-500 dark:text-slate-400 mt-1">
-              Pemantauan gempa real-time USGS & Digitasi Spasial (Polygon & Titik) Supabase
+              Pemantauan gempa real-time USGS & Analisis Spasial PostGIS Supabase
             </p>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center gap-3">
+            {/* Status Autentikasi / Akun */}
+            {user ? (
+              <div className="flex items-center gap-2 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 px-3 py-1.5 rounded-lg text-xs">
+                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                <span className="text-emerald-800 dark:text-emerald-300 font-medium max-w-[140px] truncate">
+                  {user.email}
+                </span>
+                <button
+                  onClick={handleLogout}
+                  className="ml-2 font-bold text-rose-600 hover:text-rose-700 underline"
+                >
+                  Keluar
+                </button>
+              </div>
+            ) : (
+              <button
+                onClick={() => setIsAuthModalOpen(true)}
+                className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold rounded-lg shadow transition"
+              >
+                <span>🔐</span> Masuk / Daftar
+              </button>
+            )}
+
+            {/* Toggle Dark Mode */}
             <button
               onClick={toggleDarkMode}
-              className="inline-flex items-center justify-center gap-2 px-3.5 py-2.5 bg-gray-100 dark:bg-slate-800 hover:bg-gray-200 dark:hover:bg-slate-700 text-gray-800 dark:text-slate-200 text-xs sm:text-sm font-semibold rounded-lg border border-gray-200 dark:border-slate-700 transition"
+              className="inline-flex items-center justify-center gap-2 px-3.5 py-2 bg-gray-100 dark:bg-slate-800 hover:bg-gray-200 dark:hover:bg-slate-700 text-gray-800 dark:text-slate-200 text-xs font-semibold rounded-lg border border-gray-200 dark:border-slate-700 transition"
               title="Ganti Tema"
             >
               <span>{darkMode ? '☀️' : '🌙'}</span>
-              <span>{darkMode ? 'Light Mode' : 'Dark Mode'}</span>
+              <span>{darkMode ? 'Light' : 'Dark'}</span>
             </button>
 
+            {/* Tombol Refresh */}
             <button
               onClick={loadData}
               disabled={loading}
-              className="inline-flex items-center justify-center gap-2 px-4 py-2.5 bg-slate-900 dark:bg-emerald-600 hover:bg-slate-800 dark:hover:bg-emerald-500 text-white text-xs sm:text-sm font-semibold rounded-lg shadow transition disabled:opacity-50"
+              className="inline-flex items-center justify-center gap-2 px-3.5 py-2 bg-slate-900 dark:bg-emerald-600 hover:bg-slate-800 dark:hover:bg-emerald-500 text-white text-xs font-semibold rounded-lg shadow transition disabled:opacity-50"
             >
               <span className={loading ? 'animate-spin' : ''}>🔄</span>
-              {loading ? 'Memperbarui...' : 'Refresh Data'}
+              {loading ? 'Memuat...' : 'Refresh'}
             </button>
           </div>
         </header>
@@ -408,6 +481,15 @@ export default function Home() {
           area={editingArea}
           onSave={handleSaveEdit}
           loading={updating}
+        />
+
+        {/* Modal Autentikasi Login/Register */}
+        <AuthModal
+          isOpen={isAuthModalOpen}
+          onClose={() => setIsAuthModalOpen(false)}
+          onSuccess={() => {
+            alert('Status sesi berhasil diperbarui!');
+          }}
         />
       </main>
     </div>
