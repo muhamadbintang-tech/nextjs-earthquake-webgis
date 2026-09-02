@@ -1,31 +1,87 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import DynamicMap from '@/components/map/DynamicMap';
-import { fetchEarthquakes } from '@/services/usgsApi';
-import { fetchMonitoringAreas } from '@/services/monitoringService';
+import React, { useEffect, useState, useMemo } from 'react';
+import dynamic from 'next/dynamic';
+import { getEarthquakes } from '@/services/earthquakeService';
+import {
+  getMonitoringAreas,
+  deleteMonitoringArea,
+  updateMonitoringArea,
+} from '@/services/monitoringService';
+import {
+  getMonitoringPoints,
+  deleteMonitoringPoint,
+} from '@/services/pointService';
 import { EarthquakeFeature } from '@/types/earthquake';
 import { MonitoringArea } from '@/types/monitoring';
-import { Activity, RefreshCw, AlertTriangle, Layers } from 'lucide-react';
+import { MonitoringPoint } from '@/types/point';
+import AreaTable from '@/components/dashboard/AreaTable';
+import EditAreaModal from '@/components/dashboard/EditAreaModal';
 
-export default function HomePage() {
+// Dynamic import MapComponent
+const MapComponent = dynamic(() => import('@/components/map/MapComponent'), {
+  ssr: false,
+  loading: () => (
+    <div className="w-full h-[550px] bg-gray-100 dark:bg-slate-800 rounded-lg animate-pulse flex flex-col items-center justify-center text-gray-400 dark:text-slate-500 gap-2 border border-gray-200 dark:border-slate-700">
+      <div className="w-8 h-8 border-4 border-emerald-500 border-t-transparent rounded-full animate-spin"></div>
+      <p className="text-sm font-medium">Memuat Peta WebGIS...</p>
+    </div>
+  ),
+});
+
+export default function Home() {
+  // State Dark Mode
+  const [darkMode, setDarkMode] = useState<boolean>(false);
+
+  useEffect(() => {
+    const savedTheme = localStorage.getItem('theme');
+    if (savedTheme === 'dark' || (!savedTheme && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
+      setDarkMode(true);
+    }
+  }, []);
+
+  const toggleDarkMode = () => {
+    setDarkMode((prev) => {
+      const nextMode = !prev;
+      localStorage.setItem('theme', nextMode ? 'dark' : 'light');
+      return nextMode;
+    });
+  };
+
+  // State Data
   const [earthquakes, setEarthquakes] = useState<EarthquakeFeature[]>([]);
   const [monitoringAreas, setMonitoringAreas] = useState<MonitoringArea[]>([]);
+  const [monitoringPoints, setMonitoringPoints] = useState<MonitoringPoint[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+
+  // State Edit Modal Area
+  const [editingArea, setEditingArea] = useState<MonitoringArea | null>(null);
+  const [isEditModalOpen, setIsEditModalOpen] = useState<boolean>(false);
+  const [updating, setUpdating] = useState<boolean>(false);
+
+  // State Filter Gempa
+  const [searchQuery, setSearchQuery] = useState<string>('');
+  const [minMagnitude, setMinMagnitude] = useState<number>(0);
+  const [timeRangeHours, setTimeRangeHours] = useState<number>(0);
 
   const loadData = async () => {
     setLoading(true);
     setError(null);
     try {
-      const [eqData, areaData] = await Promise.all([
-        fetchEarthquakes(),
-        fetchMonitoringAreas(),
+      const [eqResponse, areasResponse, pointsResponse] = await Promise.all([
+        getEarthquakes(),
+        getMonitoringAreas(),
+        getMonitoringPoints(),
       ]);
-      setEarthquakes(eqData.features);
-      setMonitoringAreas(areaData);
+
+      setEarthquakes(eqResponse.features || []);
+      setMonitoringAreas(areasResponse || []);
+      setMonitoringPoints(pointsResponse || []);
     } catch (err: any) {
-      setError(err.message || 'Gagal mengambil data WebGIS');
+      console.error('Error fetching data:', err);
+      setError(err.message || 'Gagal mengambil data dari server');
     } finally {
       setLoading(false);
     }
@@ -35,83 +91,325 @@ export default function HomePage() {
     loadData();
   }, []);
 
+  const filteredEarthquakes = useMemo(() => {
+    const now = Date.now();
+
+    return earthquakes.filter((item) => {
+      const matchSearch =
+        !searchQuery ||
+        item.properties.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        item.properties.place?.toLowerCase().includes(searchQuery.toLowerCase());
+
+      const matchMag = item.properties.mag >= minMagnitude;
+
+      let matchTime = true;
+      if (timeRangeHours > 0) {
+        const diffInHours = (now - item.properties.time) / (1000 * 60 * 60);
+        matchTime = diffInHours <= timeRangeHours;
+      }
+
+      return matchSearch && matchMag && matchTime;
+    });
+  }, [earthquakes, searchQuery, minMagnitude, timeRangeHours]);
+
+  const handleOpenEdit = (area: MonitoringArea) => {
+    setEditingArea(area);
+    setIsEditModalOpen(true);
+  };
+
+  const handleSaveEdit = async (
+    id: string,
+    updatedData: { name: string; category: string; description: string }
+  ) => {
+    setUpdating(true);
+    try {
+      const updated = await updateMonitoringArea(id, updatedData);
+      setMonitoringAreas((prev) =>
+        prev.map((item) => (item.id === id ? { ...item, ...updated } : item))
+      );
+      setIsEditModalOpen(false);
+      setEditingArea(null);
+      alert(`Informasi area "${updatedData.name}" berhasil diperbarui!`);
+    } catch (err: any) {
+      alert('Gagal mengubah data: ' + err.message);
+    } finally {
+      setUpdating(false);
+    }
+  };
+
+  const handleDeleteArea = async (id: string, name: string) => {
+    const isConfirm = window.confirm(
+      `Apakah Anda yakin ingin menghapus area pantauan "${name}"?`
+    );
+    if (!isConfirm) return;
+
+    setDeletingId(id);
+    try {
+      await deleteMonitoringArea(id);
+      setMonitoringAreas((prev) => prev.filter((area) => area.id !== id));
+    } catch (err: any) {
+      alert('Gagal menghapus area: ' + err.message);
+    } finally {
+      setDeletingId(null);
+    }
+  };
+
+  const handleDeletePoint = async (id: string, name: string) => {
+    const isConfirm = window.confirm(
+      `Hapus titik pantauan "${name}" dari Supabase?`
+    );
+    if (!isConfirm) return;
+
+    try {
+      await deleteMonitoringPoint(id);
+      setMonitoringPoints((prev) => prev.filter((p) => p.id !== id));
+    } catch (err: any) {
+      alert('Gagal menghapus titik: ' + err.message);
+    }
+  };
+
   return (
-    <main className="min-h-screen bg-slate-50 p-4 md:p-6 space-y-4">
-      {/* Header Aplikasi */}
-      <header className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white p-4 rounded-xl shadow-sm border border-slate-200">
-        <div>
-          <h1 className="text-2xl font-bold text-slate-800 flex items-center gap-2">
-            <Activity className="text-emerald-600 w-7 h-7" />
-            Earthquake Monitoring WebGIS
-          </h1>
-          <p className="text-sm text-slate-500">
-            Pemantauan gempa real-time publik & Digitasi Area Pantauan Supabase
-          </p>
-        </div>
+    <div className={darkMode ? 'dark' : ''}>
+      <main className="min-h-screen bg-slate-50 dark:bg-slate-950 text-gray-800 dark:text-slate-100 p-4 sm:p-6 lg:p-8 space-y-6 max-w-7xl mx-auto transition-colors duration-300">
+        {/* Header Utama */}
+        <header className="flex flex-col sm:flex-row sm:items-center sm:justify-between bg-white dark:bg-slate-900 rounded-xl shadow-sm border border-gray-100 dark:border-slate-800 p-6 gap-4 transition-colors">
+          <div>
+            <h1 className="text-2xl font-black text-gray-900 dark:text-white flex items-center gap-2">
+              <span className="text-emerald-500">🌐</span> Earthquake Monitoring WebGIS
+            </h1>
+            <p className="text-xs sm:text-sm text-gray-500 dark:text-slate-400 mt-1">
+              Pemantauan gempa real-time USGS & Digitasi Spasial (Polygon & Titik) Supabase
+            </p>
+          </div>
 
-        <button
-          onClick={loadData}
-          disabled={loading}
-          className="flex items-center gap-2 px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-lg transition-colors text-sm font-medium disabled:opacity-50"
-        >
-          <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-          Refresh Data
-        </button>
-      </header>
+          <div className="flex items-center gap-3">
+            <button
+              onClick={toggleDarkMode}
+              className="inline-flex items-center justify-center gap-2 px-3.5 py-2.5 bg-gray-100 dark:bg-slate-800 hover:bg-gray-200 dark:hover:bg-slate-700 text-gray-800 dark:text-slate-200 text-xs sm:text-sm font-semibold rounded-lg border border-gray-200 dark:border-slate-700 transition"
+              title="Ganti Tema"
+            >
+              <span>{darkMode ? '☀️' : '🌙'}</span>
+              <span>{darkMode ? 'Light Mode' : 'Dark Mode'}</span>
+            </button>
 
-      {/* Kartu Ringkasan Informasi */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
-          <p className="text-xs text-slate-500 uppercase tracking-wider font-semibold">Total Gempa Terdeteksi</p>
-          <p className="text-2xl font-bold text-slate-800 mt-1">
-            {loading ? '...' : earthquakes.length} <span className="text-sm font-normal text-slate-500">kejadian</span>
-          </p>
-        </div>
-        <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
-          <p className="text-xs text-slate-500 uppercase tracking-wider font-semibold">Area Pantauan Tersimpan</p>
-          <p className="text-2xl font-bold text-emerald-600 mt-1 flex items-center gap-2">
-            <Layers className="w-6 h-6" />
-            {loading ? '...' : monitoringAreas.length} <span className="text-sm font-normal text-slate-500">zona</span>
-          </p>
-        </div>
-        <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
-          <p className="text-xs text-slate-500 uppercase tracking-wider font-semibold">Status Sistem</p>
-          <p className="text-sm font-bold mt-2 flex items-center gap-1.5">
-            {error ? (
-              <span className="text-red-600 flex items-center gap-1">
-                <AlertTriangle className="w-4 h-4" /> Kendala Sistem
-              </span>
-            ) : (
-              <span className="text-emerald-600 flex items-center gap-1">
-                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-                USGS & Supabase Aktif
-              </span>
-            )}
-          </p>
-        </div>
-      </div>
-
-      {/* Area Peta Utama */}
-      <div className="bg-white p-2 rounded-xl border border-slate-200 shadow-sm h-[600px] relative">
-        {error ? (
-          <div className="h-full flex flex-col items-center justify-center text-red-500 gap-2">
-            <AlertTriangle className="w-10 h-10" />
-            <p className="font-semibold">{error}</p>
             <button
               onClick={loadData}
-              className="mt-2 text-xs bg-red-100 hover:bg-red-200 text-red-700 px-3 py-1.5 rounded-md transition-colors"
+              disabled={loading}
+              className="inline-flex items-center justify-center gap-2 px-4 py-2.5 bg-slate-900 dark:bg-emerald-600 hover:bg-slate-800 dark:hover:bg-emerald-500 text-white text-xs sm:text-sm font-semibold rounded-lg shadow transition disabled:opacity-50"
             >
-              Coba Lagi
+              <span className={loading ? 'animate-spin' : ''}>🔄</span>
+              {loading ? 'Memperbarui...' : 'Refresh Data'}
             </button>
           </div>
-        ) : (
-          <DynamicMap
-            earthquakes={earthquakes}
-            monitoringAreas={monitoringAreas}
-            onAreaSaved={loadData}
+        </header>
+
+        {/* 4 Kartu Statistik */}
+        <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          <div className="bg-white dark:bg-slate-900 rounded-xl p-5 border border-gray-100 dark:border-slate-800 shadow-sm transition-colors">
+            <p className="text-xs font-bold uppercase tracking-wider text-gray-400 dark:text-slate-400">Total Gempa Tampil</p>
+            <div className="mt-2 flex items-baseline gap-2">
+              <span className="text-3xl font-extrabold text-gray-900 dark:text-white">
+                {loading ? '...' : filteredEarthquakes.length}
+              </span>
+              <span className="text-xs text-gray-500 dark:text-slate-400">dari {earthquakes.length}</span>
+            </div>
+          </div>
+
+          <div className="bg-white dark:bg-slate-900 rounded-xl p-5 border border-gray-100 dark:border-slate-800 shadow-sm transition-colors">
+            <p className="text-xs font-bold uppercase tracking-wider text-gray-400 dark:text-slate-400">Area Pantauan (Polygon)</p>
+            <div className="mt-2 flex items-baseline gap-2">
+              <span className="text-3xl font-extrabold text-emerald-600 dark:text-emerald-400">
+                {loading ? '...' : monitoringAreas.length}
+              </span>
+              <span className="text-xs text-gray-500 dark:text-slate-400">zona PostGIS</span>
+            </div>
+          </div>
+
+          <div className="bg-white dark:bg-slate-900 rounded-xl p-5 border border-gray-100 dark:border-slate-800 shadow-sm transition-colors">
+            <p className="text-xs font-bold uppercase tracking-wider text-gray-400 dark:text-slate-400">Titik Pantauan (Marker)</p>
+            <div className="mt-2 flex items-baseline gap-2">
+              <span className="text-3xl font-extrabold text-blue-600 dark:text-blue-400">
+                {loading ? '...' : monitoringPoints.length}
+              </span>
+              <span className="text-xs text-gray-500 dark:text-slate-400">posko/sensor</span>
+            </div>
+          </div>
+
+          <div className="bg-white dark:bg-slate-900 rounded-xl p-5 border border-gray-100 dark:border-slate-800 shadow-sm transition-colors">
+            <p className="text-xs font-bold uppercase tracking-wider text-gray-400 dark:text-slate-400">Status PostGIS & DB</p>
+            <div className="mt-2 flex items-center gap-2">
+              {error ? (
+                <>
+                  <span className="w-2.5 h-2.5 rounded-full bg-rose-500 animate-ping"></span>
+                  <span className="text-xs font-bold text-rose-600 dark:text-rose-400">Gangguan</span>
+                </>
+              ) : (
+                <>
+                  <span className="w-2.5 h-2.5 rounded-full bg-emerald-500"></span>
+                  <span className="text-xs font-bold text-emerald-700 dark:text-emerald-400">PostGIS Aktif 🌐</span>
+                </>
+              )}
+            </div>
+          </div>
+        </section>
+
+        {/* Filter & Pencarian Lokasi */}
+        <section className="bg-white dark:bg-slate-900 rounded-xl shadow-sm border border-gray-100 dark:border-slate-800 p-5 space-y-4 transition-colors">
+          <h2 className="text-sm font-bold text-gray-700 dark:text-slate-200 flex items-center gap-2">
+            <span>🔍</span> Filter & Pencarian Gempa
+          </h2>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div>
+              <label className="block text-xs font-semibold text-gray-600 dark:text-slate-300 mb-1">Cari Lokasi / Wilayah</label>
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Contoh: Java, Sumatra, Sulawesi..."
+                className="w-full text-xs sm:text-sm px-3.5 py-2.5 rounded-lg border border-gray-200 dark:border-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-500 bg-gray-50 dark:bg-slate-800 focus:bg-white dark:focus:bg-slate-900 text-gray-900 dark:text-white transition-all"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-gray-600 dark:text-slate-300 mb-1">Batas Kekuatan (Magnitudo)</label>
+              <select
+                value={minMagnitude}
+                onChange={(e) => setMinMagnitude(Number(e.target.value))}
+                className="w-full text-xs sm:text-sm px-3.5 py-2.5 rounded-lg border border-gray-200 dark:border-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-500 bg-gray-50 dark:bg-slate-800 focus:bg-white dark:focus:bg-slate-900 text-gray-900 dark:text-white transition-all"
+              >
+                <option value={0}>Semua Kekuatan (M ≥ 0)</option>
+                <option value={3.0}>Gempa Ringan (M ≥ 3.0)</option>
+                <option value={4.5}>Gempa Sedang (M ≥ 4.5)</option>
+                <option value={6.0}>Gempa Kuat (M ≥ 6.0)</option>
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-gray-600 dark:text-slate-300 mb-1">Rentang Waktu</label>
+              <select
+                value={timeRangeHours}
+                onChange={(e) => setTimeRangeHours(Number(e.target.value))}
+                className="w-full text-xs sm:text-sm px-3.5 py-2.5 rounded-lg border border-gray-200 dark:border-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-500 bg-gray-50 dark:bg-slate-800 focus:bg-white dark:focus:bg-slate-900 text-gray-900 dark:text-white transition-all"
+              >
+                <option value={0}>Semua Waktu Tersedia</option>
+                <option value={1}>1 Jam Terakhir</option>
+                <option value={6}>6 Jam Terakhir</option>
+                <option value={12}>12 Jam Terakhir</option>
+                <option value={24}>24 Jam Terakhir</option>
+              </select>
+            </div>
+          </div>
+        </section>
+
+        {/* Kontainer Peta GIS */}
+        <section className="bg-white dark:bg-slate-900 rounded-xl shadow-sm border border-gray-100 dark:border-slate-800 p-2 sm:p-4 overflow-hidden transition-colors">
+          {error ? (
+            <div className="w-full h-[500px] flex flex-col items-center justify-center text-center p-6 gap-3 bg-rose-50/50 dark:bg-rose-950/20 rounded-lg">
+              <span className="text-4xl">⚠️</span>
+              <p className="text-sm font-bold text-rose-600 dark:text-rose-400">{error}</p>
+              <button
+                onClick={loadData}
+                className="px-4 py-2 bg-rose-600 text-white text-xs font-semibold rounded-lg hover:bg-rose-700 transition"
+              >
+                Coba Lagi
+              </button>
+            </div>
+          ) : (
+            <MapComponent
+              earthquakes={filteredEarthquakes}
+              monitoringAreas={monitoringAreas}
+              monitoringPoints={monitoringPoints}
+              onAreaSaved={loadData}
+              onPointSaved={loadData}
+            />
+          )}
+        </section>
+
+        {/* Tabel Data Area Pantauan (Polygon) */}
+        <section>
+          <AreaTable
+            areas={monitoringAreas}
+            earthquakes={filteredEarthquakes}
+            onEdit={handleOpenEdit}
+            onDelete={handleDeleteArea}
+            deletingId={deletingId}
           />
-        )}
-      </div>
-    </main>
+        </section>
+
+        {/* Tabel Data Titik Pantauan (Marker Point) */}
+        <section className="bg-white dark:bg-slate-900 rounded-xl shadow-sm border border-gray-100 dark:border-slate-800 p-6 space-y-4 transition-colors">
+          <div className="flex items-center justify-between">
+            <div>
+              <h2 className="text-lg font-bold text-gray-800 dark:text-white flex items-center gap-2">
+                <span>📍</span> Daftar Titik Pantauan (Point/Marker)
+              </h2>
+              <p className="text-xs text-gray-500 dark:text-slate-400 mt-0.5">
+                Posko evakuasi, sensor seismik, dan fasilitas medis yang tersimpan di Supabase (PostGIS Point).
+              </p>
+            </div>
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-sm text-gray-600 dark:text-slate-300">
+              <thead className="bg-gray-50 dark:bg-slate-800/60 text-xs uppercase text-gray-500 dark:text-slate-400 font-semibold border-b border-gray-100 dark:border-slate-800">
+                <tr>
+                  <th className="py-3 px-4">Nama Titik</th>
+                  <th className="py-3 px-4">Kategori</th>
+                  <th className="py-3 px-4">Koordinat (Lat, Lng)</th>
+                  <th className="py-3 px-4">Catatan</th>
+                  <th className="py-3 px-4 text-right">Aksi</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100 dark:divide-slate-800">
+                {monitoringPoints.length === 0 ? (
+                  <tr>
+                    <td colSpan={5} className="py-8 text-center text-gray-400 dark:text-slate-500 text-sm">
+                      Belum ada titik pantauan. Gunakan ikon Marker (pin) di toolbar peta untuk menandai titik baru.
+                    </td>
+                  </tr>
+                ) : (
+                  monitoringPoints.map((p) => (
+                    <tr key={p.id} className="hover:bg-gray-50/75 dark:hover:bg-slate-800/40 transition-colors">
+                      <td className="py-3 px-4 font-semibold text-gray-900 dark:text-white">
+                        {p.name}
+                      </td>
+                      <td className="py-3 px-4">
+                        <span className="text-xs font-medium px-2.5 py-1 rounded-full bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800">
+                          {p.category}
+                        </span>
+                      </td>
+                      <td className="py-3 px-4 text-xs font-mono text-gray-600 dark:text-slate-400">
+                        {p.latitude.toFixed(4)}, {p.longitude.toFixed(4)}
+                      </td>
+                      <td className="py-3 px-4 text-xs text-gray-500 dark:text-slate-400 max-w-xs truncate">
+                        {p.notes || '-'}
+                      </td>
+                      <td className="py-3 px-4 text-right">
+                        <button
+                          onClick={() => p.id && handleDeletePoint(p.id, p.name)}
+                          className="px-2.5 py-1 text-xs font-medium bg-red-50 dark:bg-red-950/50 hover:bg-red-100 dark:hover:bg-red-900/50 text-red-600 dark:text-red-300 rounded-md transition-colors"
+                        >
+                          Hapus
+                        </button>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        {/* Modal Edit Area */}
+        <EditAreaModal
+          isOpen={isEditModalOpen}
+          onClose={() => setIsEditModalOpen(false)}
+          area={editingArea}
+          onSave={handleSaveEdit}
+          loading={updating}
+        />
+      </main>
+    </div>
   );
 }
