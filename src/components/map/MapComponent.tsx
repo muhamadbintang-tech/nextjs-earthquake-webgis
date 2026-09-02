@@ -43,7 +43,7 @@ function getMarkerColor(mag: number): string {
   return '#10b981'; // Hijau
 }
 
-// 2. Helper Icon Kustom untuk Titik Pantauan Supabase (Bebas Masalah Aset Gambar)
+// 2. Helper Icon Kustom untuk Titik Pantauan Supabase
 function createPointIcon(category: string) {
   let emoji = '📍';
   let bgColor = 'bg-blue-600';
@@ -100,7 +100,7 @@ function CursorCoordinatesControl() {
   );
 }
 
-// 4. Kontrol Gambar Leaflet Draw (Mendukung Polygon & Titik/Marker)
+// 4. Kontrol Gambar Leaflet Draw
 function DrawControl({
   onPolygonCreated,
   onPointCreated,
@@ -129,7 +129,7 @@ function DrawControl({
         rectangle: {
           showArea: true,
         },
-        marker: true, // Mengaktifkan alat gambar titik/marker
+        marker: {} as any,
         polyline: false,
         circle: false,
         circlemarker: false,
@@ -253,20 +253,17 @@ export default function MapComponent({
 }: MapComponentProps) {
   const indonesiaCenter: [number, number] = [-2.548926, 118.014863];
 
-  // State Modal Polygon
   const [isAreaModalOpen, setIsAreaModalOpen] = useState(false);
   const [currentGeometry, setCurrentGeometry] = useState<any>(null);
   const [calculatedArea, setCalculatedArea] = useState<number>(0);
   const [savingArea, setSavingArea] = useState(false);
 
-  // State Modal Titik
   const [isPointModalOpen, setIsPointModalOpen] = useState(false);
   const [currentPointCoords, setCurrentPointCoords] = useState<{ lat: number; lng: number } | null>(null);
   const [savingPoint, setSavingPoint] = useState(false);
 
   const drawnItemsRef = useRef<L.FeatureGroup | null>(null);
 
-  // Handler Polygon
   const handlePolygonCreated = (geometry: any, areaKm2: number) => {
     setCurrentGeometry(geometry);
     setCalculatedArea(areaKm2);
@@ -303,7 +300,6 @@ export default function MapComponent({
     }
   };
 
-  // Handler Titik Pantauan
   const handlePointCreated = (coords: { lat: number; lng: number }) => {
     setCurrentPointCoords(coords);
     setIsPointModalOpen(true);
@@ -367,20 +363,16 @@ export default function MapComponent({
           </BaseLayer>
         </LayersControl>
 
-        {/* Pelacak Koordinat Kursor */}
         <CursorCoordinatesControl />
 
-        {/* Kontrol Gambar (Polygon & Marker Titik) */}
         <DrawControl
           onPolygonCreated={handlePolygonCreated}
           onPointCreated={handlePointCreated}
           drawnItemsRef={drawnItemsRef}
         />
 
-        {/* Layer Area Polygon Supabase */}
         <MonitoringAreasLayer monitoringAreas={monitoringAreas} drawnItemsRef={drawnItemsRef} />
 
-        {/* Layer Titik Pantauan Supabase */}
         {monitoringPoints.map((point) => (
           <Marker
             key={point.id || `${point.latitude}-${point.longitude}`}
@@ -402,7 +394,6 @@ export default function MapComponent({
           </Marker>
         ))}
 
-        {/* Titik Gempa USGS */}
         {earthquakes.map((item) => {
           const [lng, lat, depth] = item.geometry.coordinates;
           const color = getMarkerColor(item.properties.mag);
@@ -447,7 +438,6 @@ export default function MapComponent({
         })}
       </MapContainer>
 
-      {/* Modal Input Polygon */}
       <AreaModal
         isOpen={isAreaModalOpen}
         onClose={() => {
@@ -459,7 +449,6 @@ export default function MapComponent({
         loading={savingArea}
       />
 
-      {/* Modal Input Titik Pantauan */}
       <PointModal
         isOpen={isPointModalOpen}
         onClose={() => {
